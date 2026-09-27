@@ -128,8 +128,11 @@ struct Printty {
     int tty_fd;
     struct termios tio;
     struct winsize ws;
+    bool ws_changed;
     struct PrinttyInput *input;
     unibi_term *term;
+    bool ca_mode;
+    int esc_timeout;
 };
 
 #endif

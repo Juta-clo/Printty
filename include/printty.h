@@ -99,6 +99,9 @@ typedef struct {
     char utf8[5]; /* 4 utf8 bytes + null */
 } PrinttyEvent;
 
+PrinttyStatus printty_alt_screen(Printty *pt);
+PrinttyStatus printty_exit_alt_screen(Printty *pt);
+void printty_set_esc_delay(Printty *pt, int ms);
 PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x);
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);

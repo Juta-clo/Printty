@@ -14,6 +14,7 @@ typedef struct {
 
 Printty *pt = NULL;
 
+/* printty_destroy restores termios */
 void printty_cleanup(void) {
     printty_destroy(pt);
 }
@@ -32,8 +33,17 @@ int main(void) {
         exit(EXIT_FAILURE);
     }
 
-    printty_raw(pt); /* enable raw input */
-    printty_get_term_size(pt, &rows, &cols); /* terminal screen */
+    /* enter_ca_mode, alternate screen buffer */
+    if (printty_alt_screen(pt) == PRINTTY_ERR)
+        exit(EXIT_FAILURE);
+    /* raw input termios settings */
+    if (printty_raw(pt) == PRINTTY_ERR)
+        exit(EXIT_FAILURE);
+    /* terminal window size, ioctl(TIOCGWINSZ) */
+    if (printty_get_term_size(pt, &rows, &cols) == PRINTTY_ERR)
+        exit(EXIT_FAILURE);
+    /* default 100 */
+    printty_set_esc_delay(pt, 50);
 
     while (true) {
         printty_cursor_move(pt, curs_pos.y, curs_pos.x);

@@ -65,15 +65,53 @@ static int write_cap_cup(Printty *pt, int row, int col) {
     return OK;
 }
 
+static int start_timerfd(int ms) {
+    int sec = ms / 1000;
+    ms %= 1000;
+
+    int ns = ms * 1000000;
+
+    struct itimerspec its = {
+        .it_value = {.tv_sec = sec, .tv_nsec = ns},
+        .it_interval = {0}
+    };
+
+    int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC);
+    if (tfd == -1)
+        return FAIL;
+
+    if (timerfd_settime(tfd, 0, &its, NULL) == -1) {
+        close(tfd);
+        return FAIL;
+    }
+
+    return tfd;
+}
+
+static int try_update_win_size(Printty *pt) {
+    if (caught_sigwinch) {
+        if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
+            return FAIL;
+        caught_sigwinch = false;
+        pt->ws_changed = true;
+    }
+
+    return OK;
+}
+
+void printty_set_esc_delay(Printty *pt, int ms) {
+    assert(pt);
+    assert(ms > 0);
+    pt->esc_timeout = ms;
+}
+
 PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x) {
     assert(pt);
     assert(y);
     assert(x);
 
-    /* don't clear the flag so we still report resize event */
-    if (caught_sigwinch)
-        if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
-            return PRINTTY_ERR;
+    if (try_update_win_size(pt) == FAIL)
+        return PRINTTY_ERR;
 
     *y = pt->ws.ws_row;
     *x = pt->ws.ws_col;
@@ -82,48 +120,127 @@ PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x) {
 }
 
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
-    return (write_cap_cup(pt, row, col) == OK) ? PRINTTY_OK : PRINTTY_ERR;
+    int rv = write_cap_cup(pt, row, col);
+    return (rv == OK) ? PRINTTY_OK : PRINTTY_ERR;
+}
+
+PrinttyStatus printty_alt_screen(Printty *pt) {
+    int rv = write_unibi_cap(pt, unibi_enter_ca_mode);
+    if (rv == OK) {
+        pt->ca_mode = true;
+        return PRINTTY_OK;
+    } else {
+        return PRINTTY_ERR;
+    }
+}
+
+PrinttyStatus printty_exit_alt_screen(Printty *pt) {
+    int rv = write_unibi_cap(pt, unibi_exit_ca_mode);
+    if (rv == OK) {
+        pt->ca_mode = false;
+        return PRINTTY_OK;
+    } else {
+        return PRINTTY_ERR;
+    }
 }
 
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
     assert(pt);
     assert(pev);
 
-    if (caught_sigwinch) {
-        caught_sigwinch = false;
-        if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
-            return PRINTTY_ERR;
+    PrinttyStatus status = PRINTTY_ERR;
+    bool timer_done = false;
+    int tfd = -1;
+
+    if (try_update_win_size(pt) == FAIL)
+        goto cleanup;
+
+    if (pt->ws_changed) {
+        pt->ws_changed = false;
         *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
-
-        return PRINTTY_OK;
+        status = PRINTTY_OK;
+        goto cleanup;
     }
-
-    char ch;
-    int rv;
 
     while (true) {
-        rv = read(pt->tty_fd, &ch, 1);
-        if (rv == -1) {
-            if (errno == EINTR && caught_sigwinch) {
-                caught_sigwinch = false;
-                if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
-                    return PRINTTY_ERR;
-                *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
-                return PRINTTY_OK;
+        if (!timer_done) {
+            *pev = printty_input_res_event(pt->input);
 
-            } else
-                return PRINTTY_ERR;
+            if (pev->type == PRINTTY_AMBIG) {
+                if ((tfd = start_timerfd(pt->esc_timeout)) == FAIL)
+                    goto cleanup;
+
+            } else if (pev->type != PRINTTY_NONE) {
+                status = PRINTTY_OK;
+                goto cleanup;
+            }
+
+        } else if (timer_done) {
+            *pev = printty_input_force_event(pt->input);
+
+            if (pev->type != PRINTTY_NONE && pev->type != PRINTTY_AMBIG) {
+                status = PRINTTY_OK;
+                goto cleanup;
+            }
+
+           /* if force_event returns ambig it means the unicode
+            * bytes are ambiguous. We can't resolve partial unicode
+            * to anything so we need more bytes. */
+            timer_done = false;
         }
 
-        if (rv == 0)
-            return PRINTTY_EOF;
+        struct pollfd pfd[2] = {
+            { .fd = pt->tty_fd, .events = POLLIN },
+            { .fd = tfd,        .events = POLLIN }
+        };
 
-        printty_input_feed_bytes(pt->input, &ch, 1);
-        *pev = printty_input_res_event(pt->input);
+        int ready = poll(pfd, (tfd == -1) ? 1 : 2, -1);
 
-        if (pev->type != PRINTTY_NONE && pev->type != PRINTTY_AMBIG)
-            return PRINTTY_OK;
+        if (ready == -1) {
+            if (errno == EINTR) {
+                if (try_update_win_size(pt) == FAIL)
+                    goto cleanup;
+
+                if (pt->ws_changed) {
+                    pt->ws_changed = false;
+                    *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
+                    status = PRINTTY_OK;
+                    goto cleanup;
+
+                } else {
+                    goto cleanup;
+                }
+            } else {
+                goto cleanup;
+            }
+        }
+
+        if (pfd[1].revents & POLLIN) {
+            if (close(tfd) == -1)
+                return status;
+            timer_done = true;
+            tfd = -1;
+        }
+
+        if (pfd[0].revents & POLLIN) {
+            char ch;
+            int rv = read(pt->tty_fd, &ch, 1);
+            if (rv == -1) {
+                goto cleanup;
+
+            } else if (rv == 0) {
+                status = PRINTTY_EOF;
+                goto cleanup;
+            }
+
+            printty_input_feed_bytes(pt->input, &ch, 1);
+        }
     }
+
+cleanup:
+    if (tfd != -1)
+        close(tfd);
+    return status;
 }
 
 Printty *printty_create(void) {
@@ -167,6 +284,8 @@ Printty *printty_create(void) {
     if (sigaction(SIGWINCH, &sa, NULL) == -1)
         goto cleanup;
 
+    pt->esc_timeout = 100;
+
     return pt;
 
 cleanup:
@@ -190,7 +309,8 @@ void printty_destroy(Printty *pt) {
     printty_input_destroy(pt->input);
 
     write_unibi_cap(pt, unibi_keypad_local);
-    write_unibi_cap(pt, unibi_exit_ca_mode);
+    if (pt->ca_mode)
+        printty_exit_alt_screen(pt);
     unibi_destroy(pt->term);
 
     tcsetattr(pt->tty_fd, TCSANOW, &pt->tio);
