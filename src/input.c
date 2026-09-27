@@ -309,6 +309,11 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
             pev.key = PRINTTY_BACKSPACE;
             hda_delete(pt->unicode, 0, 1);
 
+        } else if (pt->unicode[0].codepoint == '\r' || pt->unicode[0].codepoint == '\n') {
+            pev.type = PRINTTY_KEY;
+            pev.key = PRINTTY_ENTER;
+            hda_delete(pt->unicode, 0, 1);
+
         } else {
             pev.type = PRINTTY_UNICODE;
             pev.codepoint = pt->unicode[0].codepoint;

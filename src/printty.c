@@ -119,6 +119,10 @@ PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x) {
     return PRINTTY_OK;
 }
 
+void printty_set_suspend_mask(Printty *pt, sigset_t mask) {
+    pt->suspend_mask = mask;
+}
+
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
     int rv = write_cap_cup(pt, row, col);
     return (rv == OK) ? PRINTTY_OK : PRINTTY_ERR;
@@ -144,7 +148,7 @@ PrinttyStatus printty_exit_alt_screen(Printty *pt) {
     }
 }
 
-PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
+static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev) {
     assert(pt);
     assert(pev);
 
@@ -152,21 +156,11 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
     bool timer_done = false;
     int tfd = -1;
 
-    if (try_update_win_size(pt) == FAIL)
-        goto cleanup;
-
-    if (pt->ws_changed) {
-        pt->ws_changed = false;
-        *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
-        status = PRINTTY_OK;
-        goto cleanup;
-    }
-
     while (true) {
         if (!timer_done) {
             *pev = printty_input_res_event(pt->input);
 
-            if (pev->type == PRINTTY_AMBIG) {
+            if (pev->type == PRINTTY_AMBIG && tfd == -1) {
                 if ((tfd = start_timerfd(pt->esc_timeout)) == FAIL)
                     goto cleanup;
 
@@ -194,7 +188,7 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
             { .fd = tfd,        .events = POLLIN }
         };
 
-        int ready = poll(pfd, (tfd == -1) ? 1 : 2, -1);
+        int ready = ppoll(pfd, (tfd == -1) ? 1 : 2, NULL, &pt->suspend_mask);
 
         if (ready == -1) {
             if (errno == EINTR) {
@@ -208,6 +202,7 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
                     goto cleanup;
 
                 } else {
+                    status = PRINTTY_SIG;
                     goto cleanup;
                 }
             } else {
@@ -243,7 +238,41 @@ cleanup:
     return status;
 }
 
-Printty *printty_create(void) {
+PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
+    assert(pt);
+    assert(pev);
+
+    if (try_update_win_size(pt) == FAIL)
+        return PRINTTY_ERR;
+
+    if (pt->ws_changed) {
+        pt->ws_changed = false;
+        *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
+        return PRINTTY_OK;
+    }
+
+    if (hda_size(pt->cached_pevs) > 0) {
+        *pev = pt->cached_pevs[0];
+        hda_delete(pt->cached_pevs, 0, 1);
+        return PRINTTY_OK;
+    }
+
+    return printty_parse_event(pt, pev);
+}
+
+// PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
+//     assert(pt);
+//     assert(row);
+//     assert(col);
+//
+//     if (write_unibi_cap(pt, unibi_user7) == FAIL)
+//         return PRINTTY_ERR;
+//
+//     PrinttyEvent pev;
+//     printty_parse_event(pt, &pev);
+// }
+
+Printty *printty_create() {
     Printty *pt = calloc(1, sizeof(Printty));
     if (!pt)
         return NULL;
@@ -260,8 +289,6 @@ Printty *printty_create(void) {
     // unibi
     pt->term = unibi_from_env();
     if (!pt->term)
-        goto cleanup;
-    if (write_unibi_cap(pt, unibi_enter_ca_mode) == FAIL)
         goto cleanup;
     if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
         goto cleanup;
@@ -282,6 +309,14 @@ Printty *printty_create(void) {
     if (sigemptyset(&sa.sa_mask) == -1)
         goto cleanup;
     if (sigaction(SIGWINCH, &sa, NULL) == -1)
+        goto cleanup;
+
+    sigset_t ss;
+    if (sigprocmask(SIG_SETMASK, NULL, &ss) == -1)
+        goto cleanup;
+    if (sigaddset(&ss, SIGWINCH) == -1)
+        goto cleanup;
+    if (sigprocmask(SIG_SETMASK, &ss, &pt->suspend_mask) == -1)
         goto cleanup;
 
     pt->esc_timeout = 100;
@@ -316,7 +351,26 @@ void printty_destroy(Printty *pt) {
     tcsetattr(pt->tty_fd, TCSANOW, &pt->tio);
     close(pt->tty_fd);
 
+    hda_free(pt->cached_pevs);
     free(pt);
+}
+
+PrinttyStatus printty_cbreak(Printty *pt) {
+    /* Job control signals enabled, \n->\r\n on output */
+
+    struct termios ts = pt->tio;
+
+    ts.c_lflag &= ~(ICANON | ECHO);
+    ts.c_lflag |= ISIG;
+    ts.c_iflag &= ~ICRNL;
+
+    ts.c_cc[VMIN] = 1;
+    ts.c_cc[VTIME] = 0;
+
+    if (tcsetattr(pt->tty_fd, TCSANOW, &ts) == -1)
+        return PRINTTY_ERR;
+
+    return PRINTTY_OK;
 }
 
 PrinttyStatus printty_raw(Printty *pt) {

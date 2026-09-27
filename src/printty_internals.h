@@ -133,6 +133,8 @@ struct Printty {
     unibi_term *term;
     bool ca_mode;
     int esc_timeout;
+    sigset_t suspend_mask;
+    PrinttyEvent *cached_pevs;
 };
 
 #endif
