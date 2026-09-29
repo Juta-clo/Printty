@@ -107,6 +107,7 @@ void printty_set_esc_delay(Printty *pt, int ms);
 void printty_set_suspend_mask(Printty *pt, sigset_t mask);
 PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x);
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
+PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col);
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 Printty *printty_create(void);
 void printty_destroy(Printty *pt);

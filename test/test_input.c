@@ -12,6 +12,7 @@ TEST_GROUP(input);
 PrinttyInput *input;
 PrinttyEvent pev;
 unibi_term *term;
+vt_data data;
 
 void feed_bytes(const char *s) {
     size_t len = strlen(s);
@@ -48,7 +49,8 @@ void verify_multibyte(PrinttyEvent *pev, const char *s, size_t len) {
 
 void verify_unicode_event(const char *s) {
     size_t len = strlen(s);
-    pev = printty_input_res_event(input);
+
+    pev = printty_input_res_event(input, &data);
 
     if (len == 1) {
         verify_ascii(&pev, s[0]);
@@ -57,7 +59,7 @@ void verify_unicode_event(const char *s) {
 }
 
 void verify_unicode_event_n(const char *s, size_t len) {
-    pev = printty_input_res_event(input);
+    pev = printty_input_res_event(input, &data);
 
     if (len == 1) {
         verify_ascii(&pev, s[0]);
@@ -76,7 +78,7 @@ void verify_unicode_force_event(const char *s) {
 }
 
 void verify_key_event(PrinttyInputKey key) {
-    pev = printty_input_res_event(input);
+    pev = printty_input_res_event(input, &data);
     TEST_ASSERT_EQUAL_INT(PRINTTY_KEY, pev.type);
     TEST_ASSERT_EQUAL_INT(key, pev.key);
 }
@@ -134,7 +136,7 @@ TEST(input, partial_unicode_then_feed_rest_and_resolve) {
 
     feed_bytes_n(b1, 1);
 
-    pev = printty_input_res_event(input);
+    pev = printty_input_res_event(input, &data);
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, pev.type);
 
     feed_bytes_n(b2, 1);
@@ -157,7 +159,7 @@ TEST(input, prefix_match_then_full_match) {
 
     feed_bytes_n(unibi_str, 1);
 
-    pev = printty_input_res_event(input);
+    pev = printty_input_res_event(input, &data);
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, pev.type);
 
     feed_bytes(unibi_str + 1);
@@ -176,7 +178,7 @@ TEST(input, unicode_and_escape_sequence) {
 
 TEST(input, force_escape_sequence_resolution) {
     feed_bytes("\x1b");
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
     verify_unicode_force_event("\x1b");
 }
 
@@ -184,12 +186,12 @@ TEST(input, force_on_incomplete_unicode_is_still_ambiguous) {
     char b1[2] = { 0xCE, '\0' }; // first byte of Ω
 
     feed_bytes(b1);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_force_event(input).type);
 }
 
 TEST(input, resolve_and_force_with_no_bytes) {
-    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_res_event(input, &data).type);
     TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_force_event(input).type);
 }
 
@@ -202,7 +204,7 @@ TEST(input, feed_escape_sequence_byte_by_byte) {
 
         if (s[i + 1])
             TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG,
-                    printty_input_res_event(input).type);
+                    printty_input_res_event(input, &data).type);
     }
 
     verify_key_event(PRINTTY_LEFT);
@@ -211,9 +213,9 @@ TEST(input, feed_escape_sequence_byte_by_byte) {
 TEST(input, repeated_res_on_ambiguous_does_not_consume) {
     feed_bytes("\x1b");
 
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
 
     verify_unicode_force_event("\x1b");
 }
@@ -222,7 +224,7 @@ TEST(input, resolve_ambiguous_then_continue_matching) {
     const char *s = unibi_get_str(term, unibi_key_left);
 
     feed_bytes_n(s, 1);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
 
     feed_bytes_n(s + 1, strlen(s) - 1);
     verify_key_event(PRINTTY_LEFT);
@@ -232,7 +234,7 @@ TEST(input, resolve_ambiguous_one_byte_at_a_time) {
     const char *s = unibi_get_str(term, unibi_key_left);
 
     feed_bytes_n(s, 1);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
 
     feed_bytes_n(s + 1, strlen(s) - 1);
     verify_key_event(PRINTTY_LEFT);
@@ -242,7 +244,7 @@ TEST(input, escape_sequence_late_mismatch) {
     const char *s = unibi_get_str(term, unibi_key_left);
 
     feed_bytes_n(s, 2);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
 
     feed_bytes("x");
 
@@ -260,7 +262,7 @@ TEST(input, full_key_followed_by_partial_key) {
 
     verify_key_event(PRINTTY_LEFT);
 
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
 }
 
 TEST(input, unicode_followed_by_partial_key) {
@@ -271,7 +273,7 @@ TEST(input, unicode_followed_by_partial_key) {
 
     verify_unicode_event("x");
 
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input, &data).type);
 }
 
 TEST(input, force_only_consumes_ambiguous_prefix) {
@@ -280,7 +282,7 @@ TEST(input, force_only_consumes_ambiguous_prefix) {
     verify_unicode_force_event("\x1b");
     verify_unicode_event("x");
 
-    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_res_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_res_event(input, &data).type);
 }
 
 TEST(input, embedded_nul_is_not_string_terminated) {
@@ -290,7 +292,7 @@ TEST(input, embedded_nul_is_not_string_terminated) {
 
     verify_unicode_event("a");
 
-    pev = printty_input_res_event(input);
+    pev = printty_input_res_event(input, &data);
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
     TEST_ASSERT_EQUAL_UINT32(0, pev.codepoint);
 

@@ -5,10 +5,10 @@
 #include "linc_tools.h"
 #include "printty.h"
 
-#define PRINTTY_UTF8_BUF_SIZE   5
+#define PRINTTY_UTF8_BUF_SIZE 5
 
 typedef struct {
-    uint32_t codepoint;
+    uint32_t cp;
     char utf8[PRINTTY_UTF8_BUF_SIZE];
 } printty_unicode_data;
 
@@ -38,14 +38,28 @@ typedef struct {
 } printty_input;
 
 typedef enum {
-    PARTTY_VT_RES_OK,
-    PARTTY_VT_RES_WAIT,
-    PARTTY_VT_RES_NONE,
+    PRINTTY_VT_RES_KEY,
+    PRINTTY_VT_RES_DATA,
+    PRINTTY_VT_RES_WAIT,
+    PRINTTY_VT_RES_NONE,
 } vt_res_status;
+
+typedef enum {
+    PRINTTY_VT_CURS_POS,
+} vt_res_data;
+
+typedef struct {
+    int row;
+    int col;
+} vt_data_curs_pos;
 
 typedef struct {
     vt_res_status status;
     PrinttyInputKey key;
+    vt_res_data data_type;
+    union {
+        vt_data_curs_pos curs_pos; // PRINTTY_VT_CURS_POS
+    };
 } vt_data;
 
 static struct {

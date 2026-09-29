@@ -148,9 +148,14 @@ PrinttyStatus printty_exit_alt_screen(Printty *pt) {
     }
 }
 
-static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev) {
+static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev,
+        vt_data *data)
+{
     assert(pt);
     assert(pev);
+    assert(data);
+
+    *data = (vt_data){0};
 
     PrinttyStatus status = PRINTTY_ERR;
     bool timer_done = false;
@@ -158,7 +163,12 @@ static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev) {
 
     while (true) {
         if (!timer_done) {
-            *pev = printty_input_res_event(pt->input);
+            *pev = printty_input_res_event(pt->input, data);
+
+            if (data->status == PRINTTY_VT_RES_DATA) {
+                status = PRINTTY_OK;
+                goto cleanup;
+            }
 
             if (pev->type == PRINTTY_AMBIG && tfd == -1) {
                 if ((tfd = start_timerfd(pt->esc_timeout)) == FAIL)
@@ -257,20 +267,50 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
         return PRINTTY_OK;
     }
 
-    return printty_parse_event(pt, pev);
+    /* if we get vt_data at this point we dropt it. User should
+     * not see it and we already waited for a duration for it to
+     * arrive. */
+
+    vt_data data;
+    PrinttyStatus status;
+
+    do {
+        status = printty_parse_event(pt, pev, &data);
+    } while (status == PRINTTY_OK && data.status == PRINTTY_VT_RES_DATA);
+
+    return status;
 }
 
-// PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
-//     assert(pt);
-//     assert(row);
-//     assert(col);
-//
-//     if (write_unibi_cap(pt, unibi_user7) == FAIL)
-//         return PRINTTY_ERR;
-//
-//     PrinttyEvent pev;
-//     printty_parse_event(pt, &pev);
-// }
+PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
+    assert(pt);
+    assert(row);
+    assert(col);
+
+    if (write_unibi_cap(pt, unibi_user7) == FAIL)
+        return PRINTTY_ERR;
+
+    vt_data data;
+    PrinttyEvent pev;
+    PrinttyStatus status;
+
+    for (size_t i = 0; i < 100; ++i) {
+        status = printty_parse_event(pt, &pev, &data);
+        if (status != PRINTTY_OK)
+            continue;
+
+        if (data.status == PRINTTY_VT_RES_DATA) {
+            /* TODO: inspect user6. if it has %i then decrement */
+            *row = data.curs_pos.row - 1;
+            *col = data.curs_pos.col - 1;
+            return status;
+        }
+
+        if (pev.type != PRINTTY_AMBIG && pev.type != PRINTTY_NONE)
+            hda_push(pt->cached_pevs, pev);
+    }
+
+    return PRINTTY_ERR;
+}
 
 Printty *printty_create() {
     Printty *pt = calloc(1, sizeof(Printty));

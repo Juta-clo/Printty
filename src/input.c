@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <regex.h>
 
 #include <unibilium.h>
 
@@ -148,21 +149,69 @@ int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
     size_t n = hda_size(pt->unicode);
 
     if (n == 0) {
-        data->status = PARTTY_VT_RES_NONE;
+        data->status = PRINTTY_VT_RES_NONE;
         return 0;
     }
+
+    /* REGEX MATCHING - TEMPORARY ***************************/
+#define CURS_ADDR_COMP_MAX 6
+
+    char *cp_string = nullptr;
+    for (size_t i = 0; i < n; ++i) {
+        if (pt->unicode[i].cp > 127)
+            break;
+        hds_append_n(cp_string, (char []){ pt->unicode[i].cp }, 1);
+    }
+
+    regex_t regex;
+    regmatch_t matches[CURS_ADDR_COMP_MAX];
+    const char *curs_addr_comps[CURS_ADDR_COMP_MAX] = {
+        "^\x1b\\[([0-9]+);([0-9]+)R",
+        "^\x1b\\[[0-9]+;[0-9]+$",
+        "^\x1b\\[[0-9]+;$",
+        "^\x1b\\[[0-9]+$",
+        "^\x1b\\[$",
+        "^\x1b$"
+    };
+
+    for (size_t i = 0; i < CURS_ADDR_COMP_MAX; ++i) {
+        if (regcomp(&regex, curs_addr_comps[i], REG_EXTENDED) != 0)
+            exit(EXIT_FAILURE);
+
+        int rv = regexec(&regex, cp_string, 3, matches, 0);
+        regfree(&regex);
+
+        if (rv == 0) {
+            if (i == 0) {
+                data->status = PRINTTY_VT_RES_DATA;
+                data->data_type = PRINTTY_VT_CURS_POS;
+                data->curs_pos.row = strtol(cp_string + matches[1].rm_so, NULL, 10);
+                data->curs_pos.col = strtol(cp_string + matches[2].rm_so, NULL, 10);
+                hds_free(cp_string);
+                return (int)(matches[0].rm_eo - matches[0].rm_so);
+
+            } else {
+                data->status = PRINTTY_VT_RES_WAIT;
+                hds_free(cp_string);
+                return PRINTTY_OK;
+            }
+        }
+    }
+
+    hds_free(cp_string);
+    /* REGEX MATCHING - TEMPORARY ****************************/
 
     char *s = nullptr;
     trie_status stat;
     size_t len = 0;
 
-    data->status = PARTTY_VT_RES_WAIT;
+    data->status = PRINTTY_VT_RES_WAIT;
 
     PrinttyInputKey saved_key = PRINTTY_MAX;
     size_t saved_len = 0;
 
     for (size_t i = 0; i < n; ++i) {
-        uint32_t codepoint = pt->unicode[i].codepoint;
+        uint32_t codepoint = pt->unicode[i].cp;
 
         if (codepoint > 127)
             break;
@@ -171,26 +220,25 @@ int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
         PrinttyInputKey *key = trie_lookup(pt->seqs, s, &stat);
 
         if (stat == TRIE_MATCH) {
-            data->status = PARTTY_VT_RES_OK;
+            data->status = PRINTTY_VT_RES_KEY;
             data->key = *key;
             len = hds_len(s);
             break;
 
         } else if (stat == TRIE_AMBIG) {
-            data->status = PARTTY_VT_RES_WAIT;
+            data->status = PRINTTY_VT_RES_WAIT;
             saved_key = *key;
             saved_len = len;
-            break;
 
         } else if (stat == TRIE_NONE) {
             if (saved_key != PRINTTY_MAX) {
-                data->status = PARTTY_VT_RES_OK;
+                data->status = PRINTTY_VT_RES_KEY;
                 data->key = saved_key;
                 len = saved_len;
                 break;
 
             } else {
-                data->status = PARTTY_VT_RES_NONE;
+                data->status = PRINTTY_VT_RES_NONE;
                 break;
             }
         }
@@ -209,7 +257,7 @@ void printty_resolve_codepoints(PrinttyInput *pt) {
         assert(n <= hda_size(pt->bytes));
 
         if (info.status == PRINTTY_UTF8_DECODE_OK) {
-            printty_unicode_data utf8_data = { .codepoint = info.codepoint };
+            printty_unicode_data utf8_data = { .cp = info.codepoint };
             memcpy(utf8_data.utf8, pt->bytes, n);
 
             hda_push(pt->unicode, utf8_data);
@@ -250,7 +298,6 @@ PrinttyInput *printty_input_create(unibi_term *term) {
         }
     }
 
-
     return pt;
 }
 
@@ -266,8 +313,11 @@ void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n) {
     hda_insert_buf(pt->bytes, hda_size(pt->bytes), n, s);
 }
 
-PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
+PrinttyEvent printty_input_res_event(PrinttyInput *pt, vt_data *data) {
     assert(pt);
+    assert(data);
+
+    *data = (vt_data){0};
 
     printty_resolve_codepoints(pt);
 
@@ -280,43 +330,48 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
     vt_data vt_data;
     PrinttyEvent pev;
 
-    if (pt->unicode[0].codepoint == '\x1b') {
+    if (pt->unicode[0].cp == '\x1b') {
         int n = printty_resolve_vt_seq(pt, &vt_data);
 
         switch (vt_data.status) {
-        case PARTTY_VT_RES_OK:
+        case PRINTTY_VT_RES_KEY:
             pev.type = PRINTTY_KEY;
             pev.key = vt_data.key;
             hda_delete(pt->unicode, 0, n);
             break;
 
-        case PARTTY_VT_RES_WAIT:
+        case PRINTTY_VT_RES_DATA:
+            pev = (PrinttyEvent){ .type = PRINTTY_NONE };
+            *data = vt_data;
+            hda_delete(pt->unicode, 0, n);
+            break;
+
+        case PRINTTY_VT_RES_WAIT:
             pev.type = PRINTTY_AMBIG;
             break;
 
-        case PARTTY_VT_RES_NONE:
+        case PRINTTY_VT_RES_NONE:
             pev.type = PRINTTY_UNICODE;
-            pev.codepoint = pt->unicode[0].codepoint;
+            pev.codepoint = pt->unicode[0].cp;
             memcpy(pev.utf8, pt->unicode[0].utf8, PRINTTY_UTF8_BUF_SIZE);
             hda_delete(pt->unicode, 0, 1);
-
             break;
         }
 
     } else {
-        if (pt->unicode[0].codepoint == 0x08 || pt->unicode[0].codepoint == 0x7f) {
+        if (pt->unicode[0].cp == 0x08 || pt->unicode[0].cp == 0x7f) {
             pev.type = PRINTTY_KEY;
             pev.key = PRINTTY_BACKSPACE;
             hda_delete(pt->unicode, 0, 1);
 
-        } else if (pt->unicode[0].codepoint == '\r' || pt->unicode[0].codepoint == '\n') {
+        } else if (pt->unicode[0].cp == '\r' || pt->unicode[0].cp == '\n') {
             pev.type = PRINTTY_KEY;
             pev.key = PRINTTY_ENTER;
             hda_delete(pt->unicode, 0, 1);
 
         } else {
             pev.type = PRINTTY_UNICODE;
-            pev.codepoint = pt->unicode[0].codepoint;
+            pev.codepoint = pt->unicode[0].cp;
             memcpy(pev.utf8, pt->unicode[0].utf8, PRINTTY_UTF8_BUF_SIZE);
             hda_delete(pt->unicode, 0, 1);
         }
@@ -338,7 +393,7 @@ PrinttyEvent printty_input_force_event(PrinttyInput *pt) {
 
     PrinttyEvent pev = {
         .type = PRINTTY_UNICODE,
-        .codepoint = pt->unicode[0].codepoint,
+        .codepoint = pt->unicode[0].cp,
     };
     memcpy(pev.utf8, pt->unicode[0].utf8, PRINTTY_UTF8_BUF_SIZE);
 
