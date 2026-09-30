@@ -40,7 +40,7 @@ int main(void) {
     PrinttyEvent pev;
     PrinttyStatus status;
 
-    if (!(pt = printty_create()))
+    if (!(pt = printty_create(NULL)))
         err_exit("printty_create");
 
     if (atexit(printty_cleanup) == -1)

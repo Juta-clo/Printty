@@ -1,4 +1,5 @@
 #include "unity_fixture.h"
+#include "pty_test.h"
 
 void run_all(void) {
     RUN_TEST_GROUP(input);
@@ -6,5 +7,6 @@ void run_all(void) {
 }
 
 int main(int argc, const char **argv) {
+    init_harness();
     return UnityMain(argc, argv, run_all);
 }

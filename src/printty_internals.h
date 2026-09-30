@@ -131,7 +131,6 @@ struct Printty {
     struct termios tio;
     struct winsize ws;
     bool ws_changed;
-    struct sigaction osa;
     struct PrinttyInput *input;
     unibi_term *term;
     bool ca_mode;

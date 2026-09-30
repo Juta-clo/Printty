@@ -4,6 +4,8 @@
 #include <bits/types/sigset_t.h>
 #include <stdint.h>
 
+#include "unibilium.h"
+
 typedef struct Printty Printty;
 
 typedef enum {
@@ -104,7 +106,7 @@ typedef struct {
     char utf8[5]; /* 4 utf8 bytes + null */
 } PrinttyEvent;
 
-Printty *printty_create(void);
+Printty *printty_create(int *tty_fd);
 void printty_destroy(Printty *pt);
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 PrinttyStatus printty_cbreak(Printty *pt);
@@ -117,6 +119,7 @@ PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols);
 PrinttyStatus printty_alt_screen(Printty *pt);
 PrinttyStatus printty_exit_alt_screen(Printty *pt);
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
+PrinttyStatus printty_write(Printty *pt, enum unibi_string uc);
 
 /* DSR requests */
 PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col);

@@ -358,11 +358,14 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
             if (vt_data.type == PRINTTY_KEY) {
                 pev.type = PRINTTY_KEY;
                 pev.key = vt_data.key;
+
             } else if (vt_data.type == PRINTTY_CURSOR_POS) {
                 pev.type = PRINTTY_CURSOR_POS;
                 memcpy(pev.opaque, vt_data.opaque, sizeof(vt_data.opaque));
+
             } else
                 assert(false && "input.c: invalid vt_data.type");
+
             hda_delete(pt->unicode, 0, n);
             break;
 
@@ -371,6 +374,7 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
             break;
 
         case PRINTTY_VT_RES_NONE:
+            /* ESC becomes normal unicode event */
             pev.type = PRINTTY_UNICODE;
             pev.codepoint = pt->unicode[0].cp;
             memcpy(pev.utf8, pt->unicode[0].utf8, PRINTTY_UTF8_BUF_SIZE);
@@ -382,19 +386,18 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
         if (pt->unicode[0].cp == 0x08 || pt->unicode[0].cp == 0x7f) {
             pev.type = PRINTTY_KEY;
             pev.key = PRINTTY_BACKSPACE;
-            hda_delete(pt->unicode, 0, 1);
 
         } else if (pt->unicode[0].cp == '\r' || pt->unicode[0].cp == '\n') {
             pev.type = PRINTTY_KEY;
             pev.key = PRINTTY_ENTER;
-            hda_delete(pt->unicode, 0, 1);
 
         } else {
             pev.type = PRINTTY_UNICODE;
             pev.codepoint = pt->unicode[0].cp;
             memcpy(pev.utf8, pt->unicode[0].utf8, PRINTTY_UTF8_BUF_SIZE);
-            hda_delete(pt->unicode, 0, 1);
         }
+
+        hda_delete(pt->unicode, 0, 1);
     }
 
     return pev;

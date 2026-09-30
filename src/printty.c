@@ -16,12 +16,6 @@
 #define FAIL -1
 #define OK    0
 
-static volatile sig_atomic_t caught_sigwinch = false;
-
-static void sigwinch_handler(int _) {
-    caught_sigwinch = true;
-}
-
 static int write_cap(Printty *pt, const char *s, size_t n) {
     size_t num_wrote = 0;
 
@@ -33,6 +27,9 @@ static int write_cap(Printty *pt, const char *s, size_t n) {
         num_wrote += rv;
     }
 
+    // char *out = strndup(s, n);
+    // free(out);
+
     return OK;
 }
 
@@ -41,7 +38,8 @@ static int write_unibi_cap(Printty *pt, enum unibi_string uc) {
     if (!s)
         return FAIL;
 
-    write_cap(pt, s, strlen(s));
+    if (write_cap(pt, s, strlen(s)) == FAIL)
+        return FAIL;
 
     return OK;
 }
@@ -88,15 +86,11 @@ static int start_timerfd(int ms) {
     return tfd;
 }
 
-static int try_update_win_size(Printty *pt) {
-    if (caught_sigwinch) {
-        if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
-            return FAIL;
-        caught_sigwinch = false;
-        pt->ws_changed = true;
-    }
+PrinttyStatus printty_write(Printty *pt, enum unibi_string uc) {
+    if (write_unibi_cap(pt, uc) == FAIL)
+        return PRINTTY_ERR;
 
-    return OK;
+    return PRINTTY_OK;
 }
 
 void printty_set_esc_delay(Printty *pt, int ms) {
@@ -105,16 +99,30 @@ void printty_set_esc_delay(Printty *pt, int ms) {
     pt->esc_timeout = ms;
 }
 
-PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x) {
+PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols) {
     assert(pt);
-    assert(y);
-    assert(x);
 
-    if (try_update_win_size(pt) == FAIL)
-        return PRINTTY_ERR;
+    sigset_t winch_set;
+    sigemptyset(&winch_set);
+    sigaddset(&winch_set, SIGWINCH);
 
-    *y = pt->ws.ws_row;
-    *x = pt->ws.ws_col;
+    if (sigtimedwait(&winch_set, NULL, &(struct timespec){0}) == -1) {
+        if (errno != EAGAIN)
+            return PRINTTY_ERR;
+
+    } else {
+        struct winsize new_ws;
+        if (ioctl(pt->tty_fd, TIOCGWINSZ, &new_ws) == -1)
+            return PRINTTY_ERR;
+
+        if (new_ws.ws_row != pt->ws.ws_row || new_ws.ws_col != pt->ws.ws_col) {
+            pt->ws_changed = true;
+            pt->ws = new_ws;
+        }
+    }
+
+    if (rows) *rows = pt->ws.ws_row;
+    if (cols) *cols = pt->ws.ws_col;
 
     return PRINTTY_OK;
 }
@@ -130,22 +138,20 @@ PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
 
 PrinttyStatus printty_alt_screen(Printty *pt) {
     int rv = write_unibi_cap(pt, unibi_enter_ca_mode);
-    if (rv == OK) {
-        pt->ca_mode = true;
-        return PRINTTY_OK;
-    } else {
+    if (rv == FAIL)
         return PRINTTY_ERR;
-    }
+
+    pt->ca_mode = true;
+    return PRINTTY_OK;
 }
 
 PrinttyStatus printty_exit_alt_screen(Printty *pt) {
     int rv = write_unibi_cap(pt, unibi_exit_ca_mode);
-    if (rv == OK) {
-        pt->ca_mode = false;
-        return PRINTTY_OK;
-    } else {
+    if (rv == FAIL)
         return PRINTTY_ERR;
-    }
+
+    pt->ca_mode = false;
+    return PRINTTY_OK;
 }
 
 static PrinttyStatus printty_read(Printty *pt) {
@@ -153,14 +159,13 @@ static PrinttyStatus printty_read(Printty *pt) {
     assert(pt);
 
     char buf[BUF_SIZE];
-    int num_read = read(pt->tty_fd, &buf, BUF_SIZE);
+    int num_read = read(pt->tty_fd, &buf, BUF_SIZE - 1);
     if (num_read == -1)
         return PRINTTY_ERR;
     if (num_read == 0)
         return PRINTTY_EOF;
 
     printty_input_feed_bytes(pt->input, buf, num_read);
-
     return PRINTTY_OK;
 }
 
@@ -169,7 +174,7 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
     assert(pev);
 
     /* winsize events have top priority */
-    if (try_update_win_size(pt) == FAIL)
+    if (printty_get_term_size(pt, NULL, NULL) != PRINTTY_OK)
         return PRINTTY_ERR;
     if (pt->ws_changed) {
         pt->ws_changed = false;
@@ -191,6 +196,10 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
     while (true) {
         if (!timer_done) {
             *pev = printty_input_res_event(pt->input);
+
+            /* drop payloads at this point */
+            if (pev->type == PRINTTY_CURSOR_POS)
+                continue;
 
             if (pev->type == PRINTTY_AMBIG && tfd == -1) {
                 if ((tfd = start_timerfd(pt->esc_timeout)) == FAIL)
@@ -224,7 +233,7 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
 
         if (ready == -1) {
             if (errno == EINTR) {
-                if (try_update_win_size(pt) == FAIL)
+                if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
                     goto cleanup;
 
                 if (pt->ws_changed) {
@@ -296,18 +305,23 @@ PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
                 goto cleanup;
             }
 
-            pev = printty_input_res_event(pt->input);
+            while (true) {
+                pev = printty_input_res_event(pt->input);
 
-            if (pev.type == PRINTTY_CURSOR_POS) {
-                memcpy(row, pev.opaque, sizeof(int));
-                memcpy(col, &pev.opaque[sizeof(int)], sizeof(int));
-                --*row;
-                --*col;
-                status = PRINTTY_OK;
-                goto cleanup;
+                if (pev.type == PRINTTY_CURSOR_POS) {
+                    memcpy(row, pev.opaque, sizeof(int));
+                    memcpy(col, &pev.opaque[sizeof(int)], sizeof(int));
+                    --*row;
+                    --*col;
+                    status = PRINTTY_OK;
+                    goto cleanup;
 
-            } else if (pev.type != PRINTTY_AMBIG && pev.type != PRINTTY_NONE) {
-                hda_push(pt->cached_pevs, pev);
+                } else if (pev.type != PRINTTY_AMBIG && pev.type != PRINTTY_NONE) {
+                    hda_push(pt->cached_pevs, pev);
+
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -317,15 +331,20 @@ cleanup:
     return status;
 }
 
-Printty *printty_create() {
+Printty *printty_create(int *tty_fd) {
     Printty *pt = calloc(1, sizeof(Printty));
     if (!pt)
         return NULL;
 
-    // tty
-    pt->tty_fd = open("/dev/tty", O_RDWR);
-    if (pt->tty_fd == -1)
-        goto cleanup;
+    if (tty_fd) {
+        pt->tty_fd = *tty_fd;
+
+    } else {
+        pt->tty_fd = open("/dev/tty", O_RDWR);
+        if (pt->tty_fd == -1)
+            goto cleanup;
+    }
+
     if (tcgetattr(pt->tty_fd, &pt->tio) == -1)
         goto cleanup;
     if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
@@ -348,13 +367,6 @@ Printty *printty_create() {
         return NULL;
     if (setvbuf(stderr, NULL, _IONBF, 0) != 0)
         return NULL;
-
-    // set up sigwinch handler
-    struct sigaction sa = { .sa_handler = sigwinch_handler };
-    if (sigemptyset(&sa.sa_mask) == -1)
-        goto cleanup;
-    if (sigaction(SIGWINCH, &sa, &pt->osa) == -1)
-        goto cleanup;
 
     sigset_t ss;
     if (sigprocmask(SIG_SETMASK, NULL, &ss) == -1)
@@ -388,7 +400,6 @@ void printty_destroy(Printty *pt) {
     unibi_destroy(pt->term);
 
     tcsetattr(pt->tty_fd, TCSANOW, &pt->tio);
-    sigaction(SIGWINCH, &pt->osa, NULL);
 
     printty_input_destroy(pt->input);
     close(pt->tty_fd);

@@ -10,14 +10,14 @@ UDIR       := deps/Unity
 # compiler
 CC       := clang
 CFLAGS   := -g -O0 -std=gnu23 -Wall -Wextra -fcolor-diagnostics
-CPPFLAGS := -I$(SRC_DIR) -I$(LTDIR) -I$(UDIR) -I$(INC_DIR)
+CPPFLAGS := -I$(TEST_DIR) -I$(SRC_DIR) -I$(LTDIR) -I$(UDIR) -I$(INC_DIR)
 CPPFLAGS += -D_GNU_SOURCE -DUNITY_OUTPUT_COLOR -DUNITY_FIXTURE_NO_EXTRAS
 DEPFLAGS := -MMD -MP
 CC_FLAGS := $(CFLAGS) $(CPPFLAGS) $(DFLAGS) $(DEPFLAGS)
 
 # linker
 LDFLAGS  :=
-LDLIBS   := -lunibilium
+LDLIBS   := -lunibilium -lvterm -lpthread
 LD_FLAGS := $(LDFLAGS) $(LDLIBS)
 
 # src/obj/dep
@@ -32,7 +32,7 @@ DEPS := $(patsubst %.c,$(BUILD)/%.d,$(SRCS))
 .PHONY: all clean
 
 all: $(BIN)
-	valgrind --quiet ./$(BIN)
+	valgrind --quiet ./$(BIN) -v
 
 $(BIN): $(OBJS)
 	$(CC) $(LD_FLAGS) $^ -o $@
