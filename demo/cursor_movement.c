@@ -30,7 +30,7 @@ void printty_cleanup(void) {
 
 void err_exit(const char *msg) {
     printty_cleanup();
-    fprintf(stderr, "%s\n", msg);
+    fprintf(stderr, "ERROR: %s\n", msg);
     _exit(EXIT_FAILURE);
 }
 
@@ -92,7 +92,7 @@ int main(void) {
 
         } else if (pev.type == PRINTTY_RESIZE) {
             if (printty_get_cursor_pos(pt, &curs_pos.y, &curs_pos.x) == PRINTTY_ERR)
-                exit(EXIT_FAILURE);
+                err_exit("printty_get_cursor_pos");
             if (printty_get_term_size(pt, &rows, &cols) == PRINTTY_ERR)
                 err_exit("printty_get_term_size");
 

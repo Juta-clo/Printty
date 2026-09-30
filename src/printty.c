@@ -148,14 +148,41 @@ PrinttyStatus printty_exit_alt_screen(Printty *pt) {
     }
 }
 
-static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev,
-        vt_data *data)
-{
+static PrinttyStatus printty_read(Printty *pt) {
+#define BUF_SIZE 256
+    assert(pt);
+
+    char buf[BUF_SIZE];
+    int num_read = read(pt->tty_fd, &buf, BUF_SIZE);
+    if (num_read == -1)
+        return PRINTTY_ERR;
+    if (num_read == 0)
+        return PRINTTY_EOF;
+
+    printty_input_feed_bytes(pt->input, buf, num_read);
+
+    return PRINTTY_OK;
+}
+
+PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
     assert(pt);
     assert(pev);
-    assert(data);
 
-    *data = (vt_data){0};
+    /* winsize events have top priority */
+    if (try_update_win_size(pt) == FAIL)
+        return PRINTTY_ERR;
+    if (pt->ws_changed) {
+        pt->ws_changed = false;
+        *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
+        return PRINTTY_OK;
+    }
+
+    /* first return cached event if any */
+    if (hda_size(pt->cached_pevs) > 0) {
+        *pev = pt->cached_pevs[0];
+        hda_delete(pt->cached_pevs, 0, 1);
+        return PRINTTY_OK;
+    }
 
     PrinttyStatus status = PRINTTY_ERR;
     bool timer_done = false;
@@ -163,12 +190,7 @@ static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev,
 
     while (true) {
         if (!timer_done) {
-            *pev = printty_input_res_event(pt->input, data);
-
-            if (data->status == PRINTTY_VT_RES_DATA) {
-                status = PRINTTY_OK;
-                goto cleanup;
-            }
+            *pev = printty_input_res_event(pt->input);
 
             if (pev->type == PRINTTY_AMBIG && tfd == -1) {
                 if ((tfd = start_timerfd(pt->esc_timeout)) == FAIL)
@@ -228,17 +250,11 @@ static PrinttyStatus printty_parse_event(Printty *pt, PrinttyEvent *pev,
         }
 
         if (pfd[0].revents & POLLIN) {
-            char ch;
-            int rv = read(pt->tty_fd, &ch, 1);
-            if (rv == -1) {
-                goto cleanup;
-
-            } else if (rv == 0) {
-                status = PRINTTY_EOF;
+            PrinttyStatus rv;
+            if ((rv = printty_read(pt)) != PRINTTY_OK) {
+                status = PRINTTY_ERR;
                 goto cleanup;
             }
-
-            printty_input_feed_bytes(pt->input, &ch, 1);
         }
     }
 
@@ -248,68 +264,57 @@ cleanup:
     return status;
 }
 
-PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
-    assert(pt);
-    assert(pev);
-
-    if (try_update_win_size(pt) == FAIL)
-        return PRINTTY_ERR;
-
-    if (pt->ws_changed) {
-        pt->ws_changed = false;
-        *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
-        return PRINTTY_OK;
-    }
-
-    if (hda_size(pt->cached_pevs) > 0) {
-        *pev = pt->cached_pevs[0];
-        hda_delete(pt->cached_pevs, 0, 1);
-        return PRINTTY_OK;
-    }
-
-    /* if we get vt_data at this point we dropt it. User should
-     * not see it and we already waited for a duration for it to
-     * arrive. */
-
-    vt_data data;
-    PrinttyStatus status;
-
-    do {
-        status = printty_parse_event(pt, pev, &data);
-    } while (status == PRINTTY_OK && data.status == PRINTTY_VT_RES_DATA);
-
-    return status;
-}
-
 PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
     assert(pt);
     assert(row);
     assert(col);
 
-    if (write_unibi_cap(pt, unibi_user7) == FAIL)
-        return PRINTTY_ERR;
-
-    vt_data data;
+    PrinttyStatus status = PRINTTY_ERR;
     PrinttyEvent pev;
-    PrinttyStatus status;
 
-    for (size_t i = 0; i < 100; ++i) {
-        status = printty_parse_event(pt, &pev, &data);
-        if (status != PRINTTY_OK)
-            continue;
+    if (write_unibi_cap(pt, unibi_user7) == FAIL)
+        return status;
 
-        if (data.status == PRINTTY_VT_RES_DATA) {
-            /* TODO: inspect user6. if it has %i then decrement */
-            *row = data.curs_pos.row - 1;
-            *col = data.curs_pos.col - 1;
-            return status;
+    int tfd = start_timerfd(100); /* TODO: remove magic number */
+
+    struct pollfd pfd[] = {
+        { .fd = pt->tty_fd, .events = POLLIN },
+        { .fd = tfd,        .events = POLLIN }
+    };
+
+    while (true) {
+        if (poll(pfd, 2, -1) == -1)
+            goto cleanup;
+
+        if (pfd[1].revents & POLLIN)
+            goto cleanup; /* no response */
+
+        if (pfd[0].revents & POLLIN) {
+            PrinttyStatus rv;
+            if ((rv = printty_read(pt)) != PRINTTY_OK) {
+                status = PRINTTY_ERR;
+                goto cleanup;
+            }
+
+            pev = printty_input_res_event(pt->input);
+
+            if (pev.type == PRINTTY_CURSOR_POS) {
+                memcpy(row, pev.opaque, sizeof(int));
+                memcpy(col, &pev.opaque[sizeof(int)], sizeof(int));
+                --*row;
+                --*col;
+                status = PRINTTY_OK;
+                goto cleanup;
+
+            } else if (pev.type != PRINTTY_AMBIG && pev.type != PRINTTY_NONE) {
+                hda_push(pt->cached_pevs, pev);
+            }
         }
-
-        if (pev.type != PRINTTY_AMBIG && pev.type != PRINTTY_NONE)
-            hda_push(pt->cached_pevs, pev);
     }
 
-    return PRINTTY_ERR;
+cleanup:
+    close(tfd);
+    return status;
 }
 
 Printty *printty_create() {
@@ -348,7 +353,7 @@ Printty *printty_create() {
     struct sigaction sa = { .sa_handler = sigwinch_handler };
     if (sigemptyset(&sa.sa_mask) == -1)
         goto cleanup;
-    if (sigaction(SIGWINCH, &sa, NULL) == -1)
+    if (sigaction(SIGWINCH, &sa, &pt->osa) == -1)
         goto cleanup;
 
     sigset_t ss;
@@ -377,20 +382,16 @@ void printty_destroy(Printty *pt) {
     if (!pt)
         return;
 
-    struct sigaction sa = { .sa_handler = SIG_IGN };
-    sigemptyset(&sa.sa_mask);
-    sigaction(SIGWINCH, &sa, NULL);
-
-    printty_input_destroy(pt->input);
-
     write_unibi_cap(pt, unibi_keypad_local);
     if (pt->ca_mode)
         printty_exit_alt_screen(pt);
     unibi_destroy(pt->term);
 
     tcsetattr(pt->tty_fd, TCSANOW, &pt->tio);
-    close(pt->tty_fd);
+    sigaction(SIGWINCH, &pt->osa, NULL);
 
+    printty_input_destroy(pt->input);
+    close(pt->tty_fd);
     hda_free(pt->cached_pevs);
     free(pt);
 }

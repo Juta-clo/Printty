@@ -38,28 +38,16 @@ typedef struct {
 } printty_input;
 
 typedef enum {
-    PRINTTY_VT_RES_KEY,
-    PRINTTY_VT_RES_DATA,
+    PRINTTY_VT_RES_OK,
     PRINTTY_VT_RES_WAIT,
     PRINTTY_VT_RES_NONE,
 } vt_res_status;
 
-typedef enum {
-    PRINTTY_VT_CURS_POS,
-} vt_res_data;
-
-typedef struct {
-    int row;
-    int col;
-} vt_data_curs_pos;
-
 typedef struct {
     vt_res_status status;
+    PrinttyInputType type;
     PrinttyInputKey key;
-    vt_res_data data_type;
-    union {
-        vt_data_curs_pos curs_pos; // PRINTTY_VT_CURS_POS
-    };
+    uint8_t opaque[32];
 } vt_data;
 
 static struct {
@@ -143,6 +131,7 @@ struct Printty {
     struct termios tio;
     struct winsize ws;
     bool ws_changed;
+    struct sigaction osa;
     struct PrinttyInput *input;
     unibi_term *term;
     bool ca_mode;

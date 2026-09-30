@@ -85,6 +85,7 @@ typedef enum {
 typedef enum {
     PRINTTY_UNICODE,
     PRINTTY_KEY,
+    PRINTTY_CURSOR_POS,
     PRINTTY_AMBIG,
     PRINTTY_NONE,
     PRINTTY_RESIZE,
@@ -96,22 +97,28 @@ typedef struct {
     union {
         uint32_t codepoint;
         PrinttyInputKey key;
+        /* payload data for reports like mouse position */
+        uint8_t opaque[32];
     };
 
     char utf8[5]; /* 4 utf8 bytes + null */
 } PrinttyEvent;
 
-PrinttyStatus printty_alt_screen(Printty *pt);
-PrinttyStatus printty_exit_alt_screen(Printty *pt);
-void printty_set_esc_delay(Printty *pt, int ms);
-void printty_set_suspend_mask(Printty *pt, sigset_t mask);
-PrinttyStatus printty_get_term_size(Printty *pt, int *y, int *x);
-PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
-PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col);
-PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 Printty *printty_create(void);
 void printty_destroy(Printty *pt);
+PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 PrinttyStatus printty_cbreak(Printty *pt);
 PrinttyStatus printty_raw(Printty *pt);
+void printty_set_esc_delay(Printty *pt, int ms);
+void printty_set_suspend_mask(Printty *pt, sigset_t mask);
+PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols);
+
+/* Wrappers for formatting and writing unibi strings */
+PrinttyStatus printty_alt_screen(Printty *pt);
+PrinttyStatus printty_exit_alt_screen(Printty *pt);
+PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
+
+/* DSR requests */
+PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col);
 
 #endif

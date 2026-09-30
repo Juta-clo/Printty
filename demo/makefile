@@ -26,7 +26,7 @@ all: $(BINS)
 # cursor_movement
 cursor_movement: $(BUILD)/cursor_movement.o $(OBJS)
 	$(CC) $(LDLIBS) $^ -o $(BUILD)/$@
-	./build/cursor_movement 2>out
+	valgrind --quiet ./build/cursor_movement 2>out
 
 $(BUILD)/cursor_movement.o: cursor_movement.c
 	mkdir -p build

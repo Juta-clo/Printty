@@ -145,21 +145,18 @@ fail:
     return used;
 }
 
-int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
-    size_t n = hda_size(pt->unicode);
-
-    if (n == 0) {
-        data->status = PRINTTY_VT_RES_NONE;
-        return 0;
-    }
-
-    /* REGEX MATCHING - TEMPORARY ***************************/
+static int printty_resolve_vt_regex(PrinttyInput *pt, vt_data *data) {
 #define CURS_ADDR_COMP_MAX 6
+    size_t n = hda_size(pt->unicode);
+    if (n == 0)
+        return 0;
 
     char *cp_string = nullptr;
+
     for (size_t i = 0; i < n; ++i) {
         if (pt->unicode[i].cp > 127)
             break;
+
         hds_append_n(cp_string, (char []){ pt->unicode[i].cp }, 1);
     }
 
@@ -183,23 +180,47 @@ int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
 
         if (rv == 0) {
             if (i == 0) {
-                data->status = PRINTTY_VT_RES_DATA;
-                data->data_type = PRINTTY_VT_CURS_POS;
-                data->curs_pos.row = strtol(cp_string + matches[1].rm_so, NULL, 10);
-                data->curs_pos.col = strtol(cp_string + matches[2].rm_so, NULL, 10);
+                data->status = PRINTTY_VT_RES_OK;
+                data->type = PRINTTY_CURSOR_POS;
+
+                memcpy(
+                    data->opaque,
+                    &(int){strtol(cp_string + matches[1].rm_so, NULL, 10)},
+                    sizeof(int)
+                );
+
+                memcpy(
+                    &data->opaque[sizeof(int)],
+                    &(int){strtol(cp_string + matches[2].rm_so, NULL, 10)},
+                    sizeof(int)
+                );
+
                 hds_free(cp_string);
                 return (int)(matches[0].rm_eo - matches[0].rm_so);
 
             } else {
                 data->status = PRINTTY_VT_RES_WAIT;
                 hds_free(cp_string);
-                return PRINTTY_OK;
+                return 1;
             }
         }
     }
 
     hds_free(cp_string);
-    /* REGEX MATCHING - TEMPORARY ****************************/
+    return 0;
+}
+
+int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
+    size_t n = hda_size(pt->unicode);
+
+    if (n == 0) {
+        data->status = PRINTTY_VT_RES_NONE;
+        return 0;
+    }
+
+    int vt_len = printty_resolve_vt_regex(pt, data);
+    if (vt_len != 0)
+        return vt_len;
 
     char *s = nullptr;
     trie_status stat;
@@ -220,7 +241,8 @@ int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
         PrinttyInputKey *key = trie_lookup(pt->seqs, s, &stat);
 
         if (stat == TRIE_MATCH) {
-            data->status = PRINTTY_VT_RES_KEY;
+            data->status = PRINTTY_VT_RES_OK;
+            data->type = PRINTTY_KEY;
             data->key = *key;
             len = hds_len(s);
             break;
@@ -232,7 +254,8 @@ int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
 
         } else if (stat == TRIE_NONE) {
             if (saved_key != PRINTTY_MAX) {
-                data->status = PRINTTY_VT_RES_KEY;
+                data->status = PRINTTY_VT_RES_OK;
+                data->type = PRINTTY_KEY;
                 data->key = saved_key;
                 len = saved_len;
                 break;
@@ -313,11 +336,8 @@ void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n) {
     hda_insert_buf(pt->bytes, hda_size(pt->bytes), n, s);
 }
 
-PrinttyEvent printty_input_res_event(PrinttyInput *pt, vt_data *data) {
+PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
     assert(pt);
-    assert(data);
-
-    *data = (vt_data){0};
 
     printty_resolve_codepoints(pt);
 
@@ -334,15 +354,15 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt, vt_data *data) {
         int n = printty_resolve_vt_seq(pt, &vt_data);
 
         switch (vt_data.status) {
-        case PRINTTY_VT_RES_KEY:
-            pev.type = PRINTTY_KEY;
-            pev.key = vt_data.key;
-            hda_delete(pt->unicode, 0, n);
-            break;
-
-        case PRINTTY_VT_RES_DATA:
-            pev = (PrinttyEvent){ .type = PRINTTY_NONE };
-            *data = vt_data;
+        case PRINTTY_VT_RES_OK:
+            if (vt_data.type == PRINTTY_KEY) {
+                pev.type = PRINTTY_KEY;
+                pev.key = vt_data.key;
+            } else if (vt_data.type == PRINTTY_CURSOR_POS) {
+                pev.type = PRINTTY_CURSOR_POS;
+                memcpy(pev.opaque, vt_data.opaque, sizeof(vt_data.opaque));
+            } else
+                assert(false && "input.c: invalid vt_data.type");
             hda_delete(pt->unicode, 0, n);
             break;
 
