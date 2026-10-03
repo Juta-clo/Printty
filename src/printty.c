@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <errno.h>
+#include <sys/signalfd.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -15,6 +16,8 @@
 
 #define FAIL -1
 #define OK    0
+
+#define ARRLEN(arr) sizeof(arr) / sizeof(typeof(arr[0]))
 
 const char *Ss = NULL;
 
@@ -127,33 +130,31 @@ void printty_set_esc_delay(Printty *pt, int ms) {
 PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols) {
     assert(pt);
 
-    sigset_t winch_set;
-    sigemptyset(&winch_set);
-    sigaddset(&winch_set, SIGWINCH);
+    struct signalfd_siginfo si;
+    if (read(pt->sigfd, &si, sizeof(si)) == -1 && errno != EAGAIN)
+        return PRINTTY_ERR;
 
-    if (sigtimedwait(&winch_set, NULL, &(struct timespec){0}) == -1) {
-        if (errno != EAGAIN)
-            return PRINTTY_ERR;
+    struct winsize new_ws;
+    if (ioctl(pt->tty_fd, TIOCGWINSZ, &new_ws) == -1)
+        return PRINTTY_ERR;
 
-    } else {
-        struct winsize new_ws;
-        if (ioctl(pt->tty_fd, TIOCGWINSZ, &new_ws) == -1)
-            return PRINTTY_ERR;
-
-        if (new_ws.ws_row != pt->ws.ws_row || new_ws.ws_col != pt->ws.ws_col) {
-            pt->ws_changed = true;
-            pt->ws = new_ws;
-        }
+    if (new_ws.ws_row != pt->ws.ws_row || new_ws.ws_col != pt->ws.ws_col) {
+        pt->ws_changed = true;
+        pt->ws = new_ws;
     }
 
-    if (rows) *rows = pt->ws.ws_row;
-    if (cols) *cols = pt->ws.ws_col;
+    if (rows)
+        *rows = pt->ws.ws_row;
+
+    if (cols)
+        *cols = pt->ws.ws_col;
 
     return PRINTTY_OK;
 }
 
 void printty_set_suspend_mask(Printty *pt, sigset_t mask) {
     pt->suspend_mask = mask;
+    sigaddset(&pt->suspend_mask, SIGWINCH);
 }
 
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
@@ -266,38 +267,41 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
             timer_done = false;
         }
 
-        struct pollfd pfd[2] = {
+        struct pollfd pfd[3] = {
             { .fd = pt->tty_fd, .events = POLLIN },
+            { .fd = pt->sigfd,   .events = POLLIN },
             { .fd = tfd,        .events = POLLIN }
         };
 
-        int ready = ppoll(pfd, (tfd == -1) ? 1 : 2, NULL, &pt->suspend_mask);
+        int ready = ppoll(pfd, (tfd == -1) ? 2 : 3, NULL, &pt->suspend_mask);
 
         if (ready == -1) {
             if (errno == EINTR) {
-                if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
-                    goto cleanup;
+                status = PRINTTY_SIG;
+                goto cleanup;
 
-                if (pt->ws_changed) {
-                    pt->ws_changed = false;
-                    *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
-                    status = PRINTTY_OK;
-                    goto cleanup;
-
-                } else {
-                    status = PRINTTY_SIG;
-                    goto cleanup;
-                }
             } else {
                 goto cleanup;
             }
         }
 
-        if (pfd[1].revents & POLLIN) {
+        if (pfd[2].revents & POLLIN) {
             if (close(tfd) == -1)
                 return status;
             timer_done = true;
             tfd = -1;
+        }
+
+        if (pfd[1].revents & POLLIN) {
+            if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
+                goto cleanup;
+
+            if (pt->ws_changed) {
+                pt->ws_changed = false;
+                *pev = (PrinttyEvent){ .type = PRINTTY_RESIZE };
+                status = PRINTTY_OK;
+                goto cleanup;
+            }
         }
 
         if (pfd[0].revents & POLLIN) {
@@ -330,15 +334,21 @@ PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
 
     struct pollfd pfd[] = {
         { .fd = pt->tty_fd, .events = POLLIN },
-        { .fd = tfd,        .events = POLLIN }
+        { .fd = tfd,        .events = POLLIN },
+        { .fd = pt->sigfd,  .events = POLLIN }
     };
 
     while (true) {
-        if (poll(pfd, 2, -1) == -1)
+        if (poll(pfd, ARRLEN(pfd), -1) == -1)
             goto cleanup;
 
+        if (pfd[2].revents & POLLIN) {
+            printty_get_term_size(pt, NULL, NULL);
+            goto cleanup;
+        }
+
         if (pfd[1].revents & POLLIN)
-            goto cleanup; /* no response */
+            goto cleanup;
 
         if (pfd[0].revents & POLLIN) {
             PrinttyStatus rv;
@@ -358,7 +368,8 @@ PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
                     status = PRINTTY_OK;
                     goto cleanup;
 
-                } else if (pev.type != PRINTTY_AMBIG && pev.type != PRINTTY_NONE) {
+                } else if (pev.type != PRINTTY_AMBIG &&
+                           pev.type != PRINTTY_NONE) {
                     hda_push(pt->cached_pevs, pev);
 
                 } else {
@@ -412,12 +423,19 @@ Printty *printty_create(int *tty_fd) {
     if (setvbuf(stderr, NULL, _IONBF, 0) != 0)
         return NULL;
 
-    sigset_t ss;
-    if (sigprocmask(SIG_SETMASK, NULL, &ss) == -1)
+    if (sigprocmask(0, NULL, &pt->suspend_mask) == -1)
         goto cleanup;
-    if (sigaddset(&ss, SIGWINCH) == -1)
+    if (sigaddset(&pt->suspend_mask, SIGWINCH) == -1)
         goto cleanup;
-    if (sigprocmask(SIG_SETMASK, &ss, &pt->suspend_mask) == -1)
+    if (sigprocmask(SIG_SETMASK, &pt->suspend_mask, NULL) == -1)
+        goto cleanup;
+
+    sigset_t sigwinch_set;
+    sigemptyset(&sigwinch_set);
+    sigaddset(&sigwinch_set, SIGWINCH);
+
+    pt->sigfd = signalfd(-1, &sigwinch_set, SFD_NONBLOCK);
+    if (pt->sigfd == -1)
         goto cleanup;
 
     pt->esc_timeout = 100;

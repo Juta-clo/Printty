@@ -137,6 +137,7 @@ struct Printty {
     int esc_timeout;
     sigset_t suspend_mask;
     PrinttyEvent *cached_pevs;
+    int sigfd;
 };
 
 #endif
