@@ -16,6 +16,23 @@
 #define FAIL -1
 #define OK    0
 
+const char *Ss = NULL;
+
+static const char *get_unibi_ext_str(Printty *pt, const char *name) {
+    size_t count = unibi_count_ext_str(pt->term);
+
+    for (size_t i = 0; i < count; ++i) {
+        const char *s = unibi_get_ext_str_name(pt->term, i);
+        if (!s)
+            return NULL;
+
+        if (strcmp(s, name) == 0)
+            return unibi_get_ext_str(pt->term, i);
+    }
+
+    return NULL;
+}
+
 static int write_cap(Printty *pt, const char *s, size_t n) {
     size_t num_wrote = 0;
 
@@ -26,9 +43,6 @@ static int write_cap(Printty *pt, const char *s, size_t n) {
 
         num_wrote += rv;
     }
-
-    // char *out = strndup(s, n);
-    // free(out);
 
     return OK;
 }
@@ -86,6 +100,17 @@ static int start_timerfd(int ms) {
     return tfd;
 }
 
+PrinttyStatus printty_write_name(Printty *pt, const char *name) {
+    const char *s = get_unibi_ext_str(pt, name);
+    if (!s)
+        return PRINTTY_ERR;
+
+    if (write_cap(pt, s, strlen(s)) == FAIL)
+        return PRINTTY_ERR;
+
+    return PRINTTY_OK;
+}
+
 PrinttyStatus printty_write(Printty *pt, enum unibi_string uc) {
     if (write_unibi_cap(pt, uc) == FAIL)
         return PRINTTY_ERR;
@@ -134,6 +159,23 @@ void printty_set_suspend_mask(Printty *pt, sigset_t mask) {
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
     int rv = write_cap_cup(pt, row, col);
     return (rv == OK) ? PRINTTY_OK : PRINTTY_ERR;
+}
+
+PrinttyStatus printty_cstyle(Printty *pt, int style) {
+    if (!Ss)
+        return PRINTTY_ERR;
+
+    unibi_var_t params[9] = {0};
+    params[0] = unibi_var_from_num(style);
+
+    char buf[64];
+    size_t len = unibi_run(Ss, params, buf, sizeof(buf));
+    if (len > sizeof(buf))
+        return PRINTTY_ERR;
+
+    write_cap(pt, buf, len);
+
+    return PRINTTY_OK;
 }
 
 PrinttyStatus printty_alt_screen(Printty *pt) {
@@ -356,6 +398,8 @@ Printty *printty_create(int *tty_fd) {
         goto cleanup;
     if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
         goto cleanup;
+
+    Ss = get_unibi_ext_str(pt, "Ss");
 
     // input parser
     pt->input = printty_input_create(pt->term);

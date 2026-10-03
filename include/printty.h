@@ -6,6 +6,11 @@
 
 #include "unibilium.h"
 
+#define PRINTTY_CDEFAULT 0
+#define PRINTTY_CBLOCK(blink) (2 - (blink))
+#define PRINTTY_CUNDER(blink) (4 - (blink))
+#define PRINTTY_CBEAM(blink) (6 - (blink))
+
 typedef struct Printty Printty;
 
 typedef enum {
@@ -119,6 +124,8 @@ PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols);
 PrinttyStatus printty_alt_screen(Printty *pt);
 PrinttyStatus printty_exit_alt_screen(Printty *pt);
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
+PrinttyStatus printty_cstyle(Printty *pt, int style);
+PrinttyStatus printty_write_name(Printty *pt, const char *name);
 PrinttyStatus printty_write(Printty *pt, enum unibi_string uc);
 
 /* DSR requests */
