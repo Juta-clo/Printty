@@ -398,9 +398,7 @@ Printty *printty_create(int *tty_fd) {
             goto cleanup;
     }
 
-    if (tcgetattr(pt->tty_fd, &pt->tio) == -1)
-        goto cleanup;
-    if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
+    if (tcgetattr(pt->tty_fd, &pt->susp_tio) == -1)
         goto cleanup;
 
     // unibi
@@ -457,11 +455,13 @@ void printty_destroy(Printty *pt) {
         return;
 
     write_unibi_cap(pt, unibi_keypad_local);
+
     if (pt->ca_mode)
         printty_exit_alt_screen(pt);
+
     unibi_destroy(pt->term);
 
-    tcsetattr(pt->tty_fd, TCSANOW, &pt->tio);
+    tcsetattr(pt->tty_fd, TCSANOW, &pt->og_tio);
 
     printty_input_destroy(pt->input);
     close(pt->tty_fd);
@@ -469,10 +469,44 @@ void printty_destroy(Printty *pt) {
     free(pt);
 }
 
+PrinttyStatus printty_start(Printty *pt) {
+    if (tcgetattr(pt->tty_fd, &pt->og_tio) == -1)
+        return PRINTTY_ERR;
+    if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
+        return PRINTTY_ERR;
+
+    if (tcsetattr(pt->tty_fd, TCSANOW, &pt->susp_tio) == -1)
+        return PRINTTY_ERR;
+
+    if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
+        return PRINTTY_ERR;
+
+    if (pt->ca_mode)
+        if (printty_alt_screen(pt) == PRINTTY_ERR)
+            return PRINTTY_ERR;
+
+    return PRINTTY_OK;
+}
+
+PrinttyStatus printty_stop(Printty *pt) {
+    write_unibi_cap(pt, unibi_keypad_local);
+
+    if (pt->ca_mode)
+        printty_exit_alt_screen(pt);
+
+    if (tcgetattr(pt->tty_fd, &pt->susp_tio) == -1)
+        return PRINTTY_ERR;
+
+    if (tcsetattr(pt->tty_fd, TCSANOW, &pt->og_tio) == -1)
+        return PRINTTY_ERR;
+
+    return PRINTTY_OK;
+}
+
 PrinttyStatus printty_cbreak(Printty *pt) {
     /* Job control signals enabled, \n->\r\n on output */
 
-    struct termios ts = pt->tio;
+    struct termios ts = pt->og_tio;
 
     ts.c_lflag &= ~(ICANON | ECHO);
     ts.c_lflag |= ISIG;
@@ -488,7 +522,7 @@ PrinttyStatus printty_cbreak(Printty *pt) {
 }
 
 PrinttyStatus printty_raw(Printty *pt) {
-    struct termios ts = pt->tio;
+    struct termios ts = pt->og_tio;
 
     ts.c_lflag &= ~(ICANON | IEXTEN | ECHO | ISIG);
     ts.c_oflag &= ~OPOST;

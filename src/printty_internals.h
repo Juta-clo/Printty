@@ -128,7 +128,8 @@ struct PrinttyInput {
 
 struct Printty {
     int tty_fd;
-    struct termios tio;
+    struct termios og_tio;
+    struct termios susp_tio;
     struct winsize ws;
     bool ws_changed;
     struct PrinttyInput *input;

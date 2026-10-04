@@ -113,6 +113,9 @@ typedef struct {
 
 Printty *printty_create(int *tty_fd);
 void printty_destroy(Printty *pt);
+PrinttyStatus printty_start(Printty *pt);
+PrinttyStatus printty_stop(Printty *pt);
+
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 PrinttyStatus printty_cbreak(Printty *pt);
 PrinttyStatus printty_raw(Printty *pt);

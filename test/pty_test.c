@@ -221,6 +221,7 @@ void create_pty(void) {
     vterm_output_set_callback(vterm, vterm_output, &mfd);
 
     pt = printty_create(&sfd);
+    printty_start(pt);
     printty_cbreak(pt);
 }
 
