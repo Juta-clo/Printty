@@ -343,8 +343,16 @@ PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
             goto cleanup;
 
         if (pfd[2].revents & POLLIN) {
-            printty_get_term_size(pt, NULL, NULL);
-            goto cleanup;
+            if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
+                goto cleanup;
+
+            if (pt->ws_changed) {
+                pt->ws_changed = false;
+                PrinttyEvent pev = { .type = PRINTTY_RESIZE };
+                hda_push(pt->cached_pevs, pev);
+            }
+
+            continue;
         }
 
         if (pfd[1].revents & POLLIN)
