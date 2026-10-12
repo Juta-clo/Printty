@@ -11,6 +11,15 @@
 #define PRINTTY_CUNDER(blink) (4 - (blink))
 #define PRINTTY_CBEAM(blink) (6 - (blink))
 
+#define PRINTTY_BLACK   0
+#define PRINTTY_RED     1
+#define PRINTTY_GREEN   2
+#define PRINTTY_YELLOW  3
+#define PRINTTY_BLUE    4
+#define PRINTTY_MAGENTA 5
+#define PRINTTY_CYAN    6
+#define PRINTTY_WHITE   7
+
 typedef struct Printty Printty;
 
 typedef enum {
@@ -127,6 +136,7 @@ PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols);
 PrinttyStatus printty_alt_screen(Printty *pt);
 PrinttyStatus printty_exit_alt_screen(Printty *pt);
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);
+PrinttyStatus printty_set_color(Printty *pt, int fg, int bg);
 PrinttyStatus printty_cstyle(Printty *pt, int style);
 PrinttyStatus printty_write_name(Printty *pt, const char *name);
 PrinttyStatus printty_write(Printty *pt, enum unibi_string uc);

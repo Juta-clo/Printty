@@ -148,9 +148,12 @@ TEST(input, arrow_key_escape_sequence) {
 }
 
 TEST(input, prefix_match_then_no_match) {
-    feed_bytes("\x1bx");
+    feed_bytes("\x1b");
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+
+    feed_bytes("x");
     verify_unicode_event("\x1b");
-    verify_unicode_event("x");
+    verify_unicode_event("\x1b"); /* given len = saved_len */
 }
 
 TEST(input, prefix_match_then_full_match) {
@@ -296,6 +299,9 @@ TEST(input, embedded_nul_is_not_string_terminated) {
     TEST_ASSERT_EQUAL_UINT32(0, pev.codepoint);
 
     verify_unicode_event("b");
+}
+
+TEST(input, ambig_then_invalidate) {
 }
 
 /************ Test runner ************/

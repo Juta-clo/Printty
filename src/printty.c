@@ -20,21 +20,8 @@
 #define ARRLEN(arr) sizeof(arr) / sizeof(typeof(arr[0]))
 
 const char *Ss = NULL;
-
-static const char *get_unibi_ext_str(Printty *pt, const char *name) {
-    size_t count = unibi_count_ext_str(pt->term);
-
-    for (size_t i = 0; i < count; ++i) {
-        const char *s = unibi_get_ext_str_name(pt->term, i);
-        if (!s)
-            return NULL;
-
-        if (strcmp(s, name) == 0)
-            return unibi_get_ext_str(pt->term, i);
-    }
-
-    return NULL;
-}
+// const char *BE = NULL;
+// const char *BD = NULL;
 
 static int write_cap(Printty *pt, const char *s, size_t n) {
     size_t num_wrote = 0;
@@ -104,7 +91,7 @@ static int start_timerfd(int ms) {
 }
 
 PrinttyStatus printty_write_name(Printty *pt, const char *name) {
-    const char *s = get_unibi_ext_str(pt, name);
+    const char *s = get_unibi_ext_str(pt->term, name);
     if (!s)
         return PRINTTY_ERR;
 
@@ -160,6 +147,44 @@ void printty_set_suspend_mask(Printty *pt, sigset_t mask) {
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
     int rv = write_cap_cup(pt, row, col);
     return (rv == OK) ? PRINTTY_OK : PRINTTY_ERR;
+}
+
+PrinttyStatus printty_set_color(Printty *pt, int fg, int bg) {
+    if (fg != -1) {
+        const char *setf = unibi_get_str(pt->term, unibi_set_a_foreground);
+        if (!setf)
+            return PRINTTY_ERR;
+
+        unibi_var_t params[9] = {0};
+        params[0] = unibi_var_from_num(fg);
+
+        char buf[64];
+        size_t len = unibi_run(setf, params, buf, sizeof(buf));
+        if (len > sizeof(buf))
+            return PRINTTY_ERR;
+
+        if (write_cap(pt, buf, len) == FAIL)
+            return PRINTTY_ERR;
+    }
+
+    if (bg != -1) {
+        const char *setb = unibi_get_str(pt->term, unibi_set_a_background);
+        if (!setb)
+            return PRINTTY_ERR;
+
+        unibi_var_t params[9] = {0};
+        params[0] = unibi_var_from_num(fg);
+
+        char buf[64];
+        size_t len = unibi_run(setb, params, buf, sizeof(buf));
+        if (len > sizeof(buf))
+            return PRINTTY_ERR;
+
+        if (write_cap(pt, buf, len) == FAIL)
+            return PRINTTY_ERR;
+    }
+
+    return PRINTTY_OK;
 }
 
 PrinttyStatus printty_cstyle(Printty *pt, int style) {
@@ -416,7 +441,9 @@ Printty *printty_create(int *tty_fd) {
     if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
         goto cleanup;
 
-    Ss = get_unibi_ext_str(pt, "Ss");
+    Ss = get_unibi_ext_str(pt->term, "Ss");
+    // BE = get_unibi_ext_str(pt->term, "BE");
+    // BD = get_unibi_ext_str(pt->term, "BD");
 
     // input parser
     pt->input = printty_input_create(pt->term);
@@ -489,6 +516,9 @@ PrinttyStatus printty_start(Printty *pt) {
     if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
         return PRINTTY_ERR;
 
+    // if (BE && write_cap(pt, BE, strlen(BE)) == FAIL)
+    //     return PRINTTY_ERR;
+
     if (pt->ca_mode)
         if (printty_alt_screen(pt) == PRINTTY_ERR)
             return PRINTTY_ERR;
@@ -497,7 +527,11 @@ PrinttyStatus printty_start(Printty *pt) {
 }
 
 PrinttyStatus printty_stop(Printty *pt) {
-    write_unibi_cap(pt, unibi_keypad_local);
+    if (write_unibi_cap(pt, unibi_keypad_local) == FAIL)
+        return PRINTTY_ERR;
+
+    // if (BD && write_cap(pt, BD, strlen(BD)) == FAIL)
+    //     return PRINTTY_ERR;
 
     if (pt->ca_mode)
         printty_exit_alt_screen(pt);

@@ -145,6 +145,21 @@ fail:
     return used;
 }
 
+const char *get_unibi_ext_str(unibi_term *term, const char *name) {
+    size_t count = unibi_count_ext_str(term);
+
+    for (size_t i = 0; i < count; ++i) {
+        const char *s = unibi_get_ext_str_name(term, i);
+        if (!s)
+            return NULL;
+
+        if (strcmp(s, name) == 0)
+            return unibi_get_ext_str(term, i);
+    }
+
+    return NULL;
+}
+
 static int printty_resolve_vt_regex(PrinttyInput *pt, vt_data *data) {
 #define CURS_ADDR_COMP_MAX 6
     size_t n = hda_size(pt->unicode);
@@ -308,6 +323,9 @@ PrinttyInput *printty_input_create(unibi_term *term) {
         return NULL;
 
     pt->seqs = trie_create();
+
+    const char *PS = get_unibi_ext_str(term, "PS");
+    const char *PE = get_unibi_ext_str(term, "PE");
 
     for (int uc = unibi_string_begin_ + 1; uc < unibi_string_end_; ++uc) {
         for (size_t partty_code = 0; partty_code < PRINTTY_MAX; ++partty_code) {

@@ -10,6 +10,7 @@
 
 typedef struct PrinttyInput PrinttyInput;
 
+const char *get_unibi_ext_str(unibi_term *term, const char *name);
 PrinttyInput *printty_input_create(unibi_term *term);
 void printty_input_destroy(PrinttyInput *pt);
 void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n);
