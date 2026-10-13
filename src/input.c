@@ -14,152 +14,6 @@
 #define MAX(a, b)   ((a > b) ? a : b)
 #define streq(a, b) (strcmp(a, b) == 0)
 
-static bool printty_utf8_continue(uint8_t b) {
-    return b & 0x80 && !(b & 0x40);
-}
-
-static bool printty_utf8_ascii(uint8_t b) {
-    return !(b & 0x80);
-}
-
-static printty_utf8_byte_type printty_find_utf8_type(uint8_t b, int *seq_len) {
-    /* These are always overlong */
-    if (b == 0xC0 || b == 0xC1)
-        return PRINTTY_UTF8_INVALID;
-
-    if (printty_utf8_continue(b))
-        return PRINTTY_UTF8_CONTINUE;
-
-    if (printty_utf8_ascii(b))
-        return PRINTTY_UTF8_ASCII;
-
-    int out = 2; /* including leader */
-    uint8_t bit = 0x20;
-
-    while (out != 4 && bit & b && (bit = bit >> 1))
-        ++out;
-
-    /* max sequence is 4 bytes */
-    if (b & (0x80 >> out))
-        return PRINTTY_UTF8_INVALID;
-
-    *seq_len = out;
-    return PRINTTY_UTF8_LEADER;
-}
-
-static uint32_t utf8_decode_bytes(uint8_t *bytes, size_t n) {
-    assert(n > 1);
-
-    /* WARNING*** allows overlong sequences */
-
-    uint32_t cp = 0;
-    uint8_t leader_b = bytes[0];
-
-    uint8_t mask = 0x01;
-    for (size_t i = 0; i < 8 - (n + 1); ++i) {
-        cp |= leader_b & mask;
-        mask *= 2;
-    }
-
-    for (size_t i = 1; i < n; ++i) {
-        uint8_t b = bytes[i];
-
-        cp <<= 6; /* all continuation bytes have 6 data bits */
-        mask = 0x01;
-        for (size_t i = 0; i < 6; ++i) {
-            cp |= b & mask;
-            mask *= 2;
-        }
-    }
-
-    if (cp > 0x10FFFF)
-        return (uint32_t)-1;
-
-    if (cp >= 0xD800 && cp <= 0xDFFF)
-        return (uint32_t)-1;
-
-    return cp;
-}
-
-static int utf8_decode(uint8_t *bytes, size_t n, printty_utf8_decode_info *info) {
-    assert(info);
-
-    int seq_len = 0;
-    size_t used = 0;
-    bool sequence_pending = false;
-
-    info->status = PRINTTY_UTF8_DECODE_WAIT;
-
-    for (size_t i = 0; i < n; ++i, ++used) {
-        printty_utf8_byte_type t = printty_find_utf8_type(bytes[i], &seq_len);
-
-        if (t == PRINTTY_UTF8_INVALID) {
-            ++used;
-            goto fail;
-        }
-
-        if (t == PRINTTY_UTF8_ASCII) {
-            if (sequence_pending)
-                goto fail;
-
-            info->codepoint = bytes[i];
-            info->status = PRINTTY_UTF8_DECODE_OK;
-            ++used;
-            break;
-
-        } else if (t == PRINTTY_UTF8_CONTINUE) {
-            if (!sequence_pending) {
-                ++used;
-                goto fail;
-            }
-
-            if (--seq_len != 0) {
-                continue;
-            }
-
-            sequence_pending = false;
-
-            uint32_t cp = utf8_decode_bytes(bytes, ++used);
-            if (cp == (uint32_t)-1)
-                goto fail;
-
-            info->codepoint = cp;
-            info->status = PRINTTY_UTF8_DECODE_OK;
-            break;
-
-        } else if (t == PRINTTY_UTF8_LEADER) {
-            if (sequence_pending)
-                goto fail;
-
-                    /* the leader is part of the sequence */
-            seq_len = seq_len - 1;
-            sequence_pending = true;
-
-        }
-    }
-
-    return used;
-
-fail:
-    info->status = PRINTTY_UTF8_DECODE_FAIL;
-    return used;
-}
-
-const char *get_unibi_ext_str(unibi_term *term, const char *name) {
-    size_t count = unibi_count_ext_str(term);
-
-    for (size_t i = 0; i < count; ++i) {
-        const char *s = unibi_get_ext_str_name(term, i);
-        if (!s)
-            return NULL;
-
-        if (strcmp(s, name) == 0)
-            return unibi_get_ext_str(term, i);
-    }
-
-    return NULL;
-}
-
 static int printty_resolve_vt_regex(PrinttyInput *pt, vt_data *data) {
 #define CURS_ADDR_COMP_MAX 6
     size_t n = hda_size(pt->unicode);
@@ -225,7 +79,7 @@ static int printty_resolve_vt_regex(PrinttyInput *pt, vt_data *data) {
     return 0;
 }
 
-int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
+static int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
     size_t n = hda_size(pt->unicode);
 
     if (n == 0) {
@@ -286,7 +140,7 @@ int printty_resolve_vt_seq(PrinttyInput *pt, vt_data *data) {
     return len;
 }
 
-void printty_resolve_codepoints(PrinttyInput *pt) {
+static void printty_resolve_codepoints(PrinttyInput *pt) {
     printty_utf8_decode_info info = {0};
     size_t n;
 
@@ -308,45 +162,6 @@ void printty_resolve_codepoints(PrinttyInput *pt) {
             break;
         }
     }
-}
-
-PrinttyInput *printty_input_create(unibi_term *term) {
-    const char *lang = getenv("LANG");
-    if (!lang)
-        return NULL;
-
-    if (!(lang = strchr(lang, '.')) || !++lang || !streq("UTF-8", lang))
-        return NULL;
-
-    PrinttyInput *pt = calloc(1, sizeof(PrinttyInput));
-    if (!pt)
-        return NULL;
-
-    pt->seqs = trie_create();
-
-    const char *PS = get_unibi_ext_str(term, "PS");
-    const char *PE = get_unibi_ext_str(term, "PE");
-
-    for (int uc = unibi_string_begin_ + 1; uc < unibi_string_end_; ++uc) {
-        for (size_t partty_code = 0; partty_code < PRINTTY_MAX; ++partty_code) {
-            const char *name = partty_keys[partty_code].name;
-
-            if (streq(unibi_name_str(uc), name)) {
-                const char *unibi_str = unibi_get_str(term, uc);
-                if (unibi_str)
-                    trie_add(pt->seqs, unibi_str, &partty_code, sizeof(int));
-            }
-        }
-    }
-
-    return pt;
-}
-
-void printty_input_destroy(PrinttyInput *pt) {
-    trie_destroy(pt->seqs);
-    hda_free(pt->bytes);
-    hda_free(pt->unicode);
-    free(pt);
 }
 
 void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n) {
@@ -441,4 +256,58 @@ PrinttyEvent printty_input_force_event(PrinttyInput *pt) {
     hda_delete(pt->unicode, 0, 1);
 
     return pev;
+}
+
+const char *get_unibi_ext_str(unibi_term *term, const char *name) {
+    size_t count = unibi_count_ext_str(term);
+
+    for (size_t i = 0; i < count; ++i) {
+        const char *s = unibi_get_ext_str_name(term, i);
+        if (!s)
+            return NULL;
+
+        if (strcmp(s, name) == 0)
+            return unibi_get_ext_str(term, i);
+    }
+
+    return NULL;
+}
+
+PrinttyInput *printty_input_create(unibi_term *term) {
+    const char *lang = getenv("LANG");
+    if (!lang)
+        return NULL;
+
+    if (!(lang = strchr(lang, '.')) || !++lang || !streq("UTF-8", lang))
+        return NULL;
+
+    PrinttyInput *pt = calloc(1, sizeof(PrinttyInput));
+    if (!pt)
+        return NULL;
+
+    pt->seqs = trie_create();
+
+    // const char *PS = get_unibi_ext_str(term, "PS");
+    // const char *PE = get_unibi_ext_str(term, "PE");
+
+    for (int uc = unibi_string_begin_ + 1; uc < unibi_string_end_; ++uc) {
+        for (size_t partty_code = 0; partty_code < PRINTTY_MAX; ++partty_code) {
+            const char *name = partty_keys[partty_code].name;
+
+            if (streq(unibi_name_str(uc), name)) {
+                const char *unibi_str = unibi_get_str(term, uc);
+                if (unibi_str)
+                    trie_add(pt->seqs, unibi_str, &partty_code, sizeof(int));
+            }
+        }
+    }
+
+    return pt;
+}
+
+void printty_input_destroy(PrinttyInput *pt) {
+    trie_destroy(pt->seqs);
+    hda_free(pt->bytes);
+    hda_free(pt->unicode);
+    free(pt);
 }

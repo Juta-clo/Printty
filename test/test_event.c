@@ -3,6 +3,7 @@
 #include "printty_internals.h" // IWYU pragma: keep
 #include "linc_tools.h" // IWYU pragma: keep
 #include "pty_test.h"
+#include "input.h"
 
 TEST_GROUP(event);
 

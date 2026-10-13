@@ -32,7 +32,6 @@ DEPS := $(patsubst %.c,$(BUILD)/%.d,$(SRCS))
 .PHONY: all clean
 
 all: $(BIN)
-	valgrind --quiet ./$(BIN) -v
 
 $(BIN): $(OBJS)
 	$(CC) $(LD_FLAGS) $^ -o $@

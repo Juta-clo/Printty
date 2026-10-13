@@ -1,41 +1,10 @@
 #ifndef PRINTTY_INTERNALS_H
 #define PRINTTY_INTERNALS_H
 
+#include <sys/ioctl.h>
+#include <termios.h>
 #include <unibilium.h>
-#include "linc_tools.h"
 #include "printty.h"
-
-#define PRINTTY_UTF8_BUF_SIZE 5
-
-typedef struct {
-    uint32_t cp;
-    char utf8[PRINTTY_UTF8_BUF_SIZE];
-} printty_unicode_data;
-
-typedef enum {
-    PRINTTY_UTF8_CONTINUE,
-    PRINTTY_UTF8_LEADER,
-    PRINTTY_UTF8_ASCII,
-    PRINTTY_UTF8_INVALID,
-} printty_utf8_byte_type;
-
-typedef enum {
-    PRINTTY_UTF8_DECODE_OK,
-    PRINTTY_UTF8_DECODE_WAIT,
-    PRINTTY_UTF8_DECODE_FAIL,
-} printty_utf8_decode_status;
-
-typedef struct {
-    printty_utf8_decode_status status;
-    uint32_t codepoint;
-} printty_utf8_decode_info;
-
-typedef struct {
-    uint8_t *bytes;
-    printty_unicode_data *unicode;
-    unibi_term *term;
-    Trie *seqs;
-} printty_input;
 
 typedef enum {
     PRINTTY_VT_RES_OK,
@@ -118,12 +87,6 @@ static struct {
     [PRINTTY_F22]       = { "key_f22" },
     [PRINTTY_F23]       = { "key_f23" },
     [PRINTTY_F24]       = { "key_f24" },
-};
-
-struct PrinttyInput {
-    uint8_t *bytes;
-    Trie *seqs;
-    printty_unicode_data *unicode;
 };
 
 struct Printty {
