@@ -238,14 +238,14 @@ TEST(input, resolve_ambiguous_one_byte_at_a_time) {
 }
 
 TEST(input, escape_sequence_late_mismatch) {
-    feed_bytes("\x1b[");
+    feed_bytes("\x1b[(");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
 
-    feed_bytes("x");
-
+    feed_bytes("0"); /* parameter byte after intermediate. bad. */
     verify_unicode_event("\x1b");
     verify_unicode_event("[");
-    verify_unicode_event("x");
+    verify_unicode_event("(");
+    verify_unicode_event("0");
 }
 
 TEST(input, full_key_followed_by_partial_key) {
@@ -303,6 +303,29 @@ TEST(input, carriage_return_then_cursor_report) {
     );
 }
 
+TEST(input, unknown_csi) {
+    feed_bytes("\x1b[x");
+    TEST_ASSERT_EQUAL_INT(
+        PRINTTY_UNKNOWN_CSI,
+        printty_input_res_event(input).type
+    );
+}
+
+TEST(input, bracketed_paste_markers) {
+    feed_bytes("\x1b[200~");
+    feed_bytes("\x1b[201~");
+
+    TEST_ASSERT_EQUAL_INT(
+        PRINTTY_PASTE_BEGIN,
+        printty_input_res_event(input).type
+    );
+
+    TEST_ASSERT_EQUAL_INT(
+        PRINTTY_PASTE_END,
+        printty_input_res_event(input).type
+    );
+}
+
 /************ Test runner ************/
 
 TEST_GROUP_RUNNER(input) {
@@ -331,4 +354,6 @@ TEST_GROUP_RUNNER(input) {
     RUN_TEST_CASE(input, force_only_consumes_ambiguous_prefix);
     RUN_TEST_CASE(input, embedded_nul_is_not_string_terminated);
     RUN_TEST_CASE(input, carriage_return_then_cursor_report);
+    RUN_TEST_CASE(input, unknown_csi);
+    RUN_TEST_CASE(input, bracketed_paste_markers);
 }

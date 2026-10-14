@@ -20,8 +20,8 @@
 #define ARRLEN(arr) sizeof(arr) / sizeof(typeof(arr[0]))
 
 const char *Ss = NULL;
-// const char *BE = NULL;
-// const char *BD = NULL;
+const char *BE = NULL;
+const char *BD = NULL;
 
 static int write_cap(Printty *pt, const char *s, size_t n) {
     size_t num_wrote = 0;
@@ -438,12 +438,15 @@ Printty *printty_create(int *tty_fd) {
     pt->term = unibi_from_env();
     if (!pt->term)
         goto cleanup;
-    if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
-        goto cleanup;
 
     Ss = get_unibi_ext_str(pt->term, "Ss");
-    // BE = get_unibi_ext_str(pt->term, "BE");
-    // BD = get_unibi_ext_str(pt->term, "BD");
+    BE = get_unibi_ext_str(pt->term, "BE");
+    BD = get_unibi_ext_str(pt->term, "BD");
+
+    if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
+        goto cleanup;
+    if (BE && write_cap(pt, BE, strlen(BE)) == FAIL)
+        goto cleanup;
 
     // input parser
     pt->input = printty_input_create(pt->term);
@@ -490,6 +493,8 @@ void printty_destroy(Printty *pt) {
         return;
 
     write_unibi_cap(pt, unibi_keypad_local);
+    if (BD)
+        write_cap(pt, BD, strlen(BD));
 
     if (pt->ca_mode)
         printty_exit_alt_screen(pt);
@@ -515,9 +520,8 @@ PrinttyStatus printty_start(Printty *pt) {
 
     if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
         return PRINTTY_ERR;
-
-    // if (BE && write_cap(pt, BE, strlen(BE)) == FAIL)
-    //     return PRINTTY_ERR;
+    if (BE && write_cap(pt, BE, strlen(BE)) == FAIL)
+        return PRINTTY_ERR;
 
     if (pt->ca_mode)
         if (printty_alt_screen(pt) == PRINTTY_ERR)
@@ -530,8 +534,8 @@ PrinttyStatus printty_stop(Printty *pt) {
     if (write_unibi_cap(pt, unibi_keypad_local) == FAIL)
         return PRINTTY_ERR;
 
-    // if (BD && write_cap(pt, BD, strlen(BD)) == FAIL)
-    //     return PRINTTY_ERR;
+    if (BD && write_cap(pt, BD, strlen(BD)) == FAIL)
+        return PRINTTY_ERR;
 
     if (pt->ca_mode)
         printty_exit_alt_screen(pt);

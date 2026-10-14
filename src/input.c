@@ -34,28 +34,45 @@ static PrinttyEvent pop_uc_ev(PrinttyInput *pt) {
     return pev;
 }
 
-static int get_cpr(csi_data *data, PrinttyEvent *pev) {
+static void get_cpr(csi_data *data, PrinttyEvent *pev) {
     assert(data && pev);
 
-    param_data pdata;
-    if (param_decode(data->param_str, hda_size(data->param_str), &pdata) == -1)
-        return -1;
+    if (hda_size(data->params) != 2 ||
+        hda_size(data->params[0]) != 1 || hda_size(data->params[1]) != 1 ||
+        data->params[0][0] == 0 || data->params[1][0] == 0)
+    {
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        return;
+    }
 
-    int row = 1;
-    int col = 1;
-
-    if (hda_size(pdata.params) > 0)
-        row = pdata.params[0][0];
-    if (hda_size(pdata.params) > 1)
-        col = pdata.params[1][0];
+    int row = (data->params[0][0] == -1) ? 1 : data->params[0][0];
+    int col = (data->params[1][0] == -1) ? 1 : data->params[1][0];
 
     memcpy(pev->opaque, &row, sizeof(int));
     memcpy(&pev->opaque[sizeof(int)], &col, sizeof(int));
 
     pev->type = PRINTTY_CURSOR_POS;
+}
 
-    param_free_data(&pdata);
-    return 0;
+static void get_csi_tilde(csi_data *data, PrinttyEvent *pev) {
+    assert(data && pev);
+
+    if (hda_size(data->params) != 1 || hda_size(data->params[0]) != 1) {
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        return;
+    }
+
+    switch (data->params[0][0]) {
+    case 200 /*PS*/:
+        pev->type = PRINTTY_PASTE_BEGIN;
+        break;
+    case 201 /*PE*/:
+        pev->type = PRINTTY_PASTE_END;
+        break;
+    default:
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        break;;
+    }
 }
 
 static bool check_trie(PrinttyInput *pt, PrinttyEvent *pev) {
@@ -88,9 +105,9 @@ static bool printty_resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
     assert(pt && pev);
 
     bool rv = false;
-    size_t len = hda_size(pt->unicode);
-    char32_t *cps = nullptr;
     csi_data data = {0};
+    char32_t *cps = nullptr;
+    size_t len = hda_size(pt->unicode);
 
     if (check_trie(pt, pev))
         return true;
@@ -106,14 +123,19 @@ static bool printty_resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
             continue;
         }
 
+        if (csi_param_decode(&data) == -1)
+            goto cleanup;
+
         if (data.final_byte == 'R') {
-            if (get_cpr(&data, pev) == -1)
-                goto cleanup;
+            get_cpr(&data, pev);
+        } else if (data.final_byte == '~') {
+            get_csi_tilde(&data, pev);
+        } else
+            pev->type = PRINTTY_UNKNOWN_CSI;
 
-            hda_delete(pt->unicode, 0, n);
-            rv = true;
-        }
-
+        rv = true;
+        hda_delete(pt->unicode, 0, n);
+        csi_free_data(&data);
         goto cleanup;
     }
 
@@ -219,17 +241,14 @@ PrinttyInput *printty_input_create(unibi_term *term) {
 
     pt->seqs = trie_create();
 
-    // const char *PS = get_unibi_ext_str(term, "PS");
-    // const char *PE = get_unibi_ext_str(term, "PE");
-
     for (int uc = unibi_string_begin_ + 1; uc < unibi_string_end_; ++uc) {
-        for (size_t partty_code = 0; partty_code < PRINTTY_MAX; ++partty_code) {
-            const char *name = partty_keys[partty_code].name;
+        for (size_t ptc = 0; ptc < PRINTTY_MAX; ++ptc) {
+            const char *name = partty_keys[ptc].name;
 
             if (streq(unibi_name_str(uc), name)) {
                 const char *unibi_str = unibi_get_str(term, uc);
                 if (unibi_str)
-                    trie_add(pt->seqs, unibi_str, &partty_code, sizeof(int));
+                    trie_add(pt->seqs, unibi_str, &ptc, sizeof(int));
             }
         }
     }

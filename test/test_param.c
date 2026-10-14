@@ -6,32 +6,32 @@ TEST_GROUP(param);
 
 /************ Fixture ************/
 
-static param_data data;
+csi_data data;
 
 #define assert_success_param_decode(_s) \
     do { \
-        const uint8_t exp[] = (_s); \
+        hda_insert_buf(data.param_str, 0, strlen(_s), _s); \
         TEST_ASSERT_EQUAL_INT( \
                 0, \
-                param_decode(exp, sizeof(exp) - 1, &data) \
+                csi_param_decode(&data) \
         ); \
     } while (false)
 
 #define assert_fail_param_decode(_s) \
     do { \
-        const uint8_t exp[] = (_s); \
+        hda_insert_buf(data.param_str, 0, strlen(_s), _s); \
         TEST_ASSERT_EQUAL_INT( \
                 -1, \
-                param_decode(exp, sizeof(exp) - 1, &data) \
+                csi_param_decode(&data) \
         ); \
     } while (false)
 
 TEST_SETUP(param) {
-    data = (param_data){0};
+    data = (csi_data){0};
 }
 
 TEST_TEAR_DOWN(param) {
-    param_free_data(&data);
+    csi_free_data(&data);
 }
 
 /************ Tests ************/
