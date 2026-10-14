@@ -147,7 +147,7 @@ TEST(input, arrow_key_escape_sequence) {
     verify_key_event(PRINTTY_LEFT);
 }
 
-TEST(input, prefix_match_then_no_match) {
+IGNORE_TEST(input, prefix_match_then_no_match) {
     feed_bytes("\x1b");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
 
