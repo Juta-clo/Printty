@@ -3,11 +3,12 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <uchar.h>
 
 #define PRINTTY_UTF8_BUF_SIZE 5
 
 typedef struct {
-    uint32_t cp;
+    char32_t cp;
     char utf8[PRINTTY_UTF8_BUF_SIZE];
 } printty_unicode_data;
 

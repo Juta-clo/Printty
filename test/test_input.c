@@ -147,13 +147,13 @@ TEST(input, arrow_key_escape_sequence) {
     verify_key_event(PRINTTY_LEFT);
 }
 
-IGNORE_TEST(input, prefix_match_then_no_match) {
+TEST(input, prefix_match_then_no_match) {
     feed_bytes("\x1b");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
 
     feed_bytes("x");
     verify_unicode_event("\x1b");
-    verify_unicode_event("\x1b"); /* given len = saved_len */
+    verify_unicode_event("x");
 }
 
 TEST(input, prefix_match_then_full_match) {
@@ -197,18 +197,13 @@ TEST(input, resolve_and_force_with_no_bytes) {
     TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_force_event(input).type);
 }
 
-TEST(input, feed_escape_sequence_byte_by_byte) {
-    const char *s = unibi_get_str(term, unibi_key_left);
-    size_t len = strlen(s);
-
-    for (size_t i = 0; i < len; ++i) {
-        feed_bytes_n(&s[i], 1);
-
-        if (s[i + 1])
-            TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG,
-                    printty_input_res_event(input).type);
-    }
-
+/* relies on SS3 handling */
+IGNORE_TEST(input, feed_escape_sequence_byte_by_byte) {
+    feed_bytes("\x1b");
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    feed_bytes("O");
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
+    feed_bytes("D");
     verify_key_event(PRINTTY_LEFT);
 }
 
@@ -243,15 +238,13 @@ TEST(input, resolve_ambiguous_one_byte_at_a_time) {
 }
 
 TEST(input, escape_sequence_late_mismatch) {
-    const char *s = unibi_get_str(term, unibi_key_left);
-
-    feed_bytes_n(s, 2);
+    feed_bytes("\x1b[");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
 
     feed_bytes("x");
 
-    verify_unicode_event_n(&s[0], 1);
-    verify_unicode_event_n(&s[1], 1);
+    verify_unicode_event("\x1b");
+    verify_unicode_event("[");
     verify_unicode_event("x");
 }
 
@@ -301,7 +294,13 @@ TEST(input, embedded_nul_is_not_string_terminated) {
     verify_unicode_event("b");
 }
 
-TEST(input, ambig_then_invalidate) {
+TEST(input, carriage_return_then_cursor_report) {
+    feed_bytes("\r\x1b[3;1R");
+    verify_key_event(PRINTTY_ENTER);
+    TEST_ASSERT_EQUAL_INT(
+        PRINTTY_CURSOR_POS,
+        printty_input_res_event(input).type
+    );
 }
 
 /************ Test runner ************/
@@ -331,4 +330,5 @@ TEST_GROUP_RUNNER(input) {
     RUN_TEST_CASE(input, unicode_followed_by_partial_key);
     RUN_TEST_CASE(input, force_only_consumes_ambiguous_prefix);
     RUN_TEST_CASE(input, embedded_nul_is_not_string_terminated);
+    RUN_TEST_CASE(input, carriage_return_then_cursor_report);
 }

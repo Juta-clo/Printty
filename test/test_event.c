@@ -93,7 +93,8 @@ TEST(event, get_cursor_position_with_events_in_buffer) {
 }
 
 TEST(event, get_event_drops_payload_events) {
-    hda_insert_buf(pt->input->bytes, 0, 6, "\x1b[1;2R");
+    /* Don't send 1;2, fundamental ambiguity with Shift+F3... */
+    hda_insert_buf(pt->input->bytes, 0, 8, "\x1b[10;20R");
     hda_push(pt->input->bytes, 'a');
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));

@@ -25,6 +25,7 @@ Printty *pt = NULL;
 
 /* printty_destroy restores termios */
 void printty_cleanup(void) {
+    printty_stop(pt);
     printty_destroy(pt);
 }
 
@@ -42,6 +43,9 @@ int main(void) {
 
     if (!(pt = printty_create(NULL)))
         err_exit("printty_create");
+
+    if (printty_start(pt) == PRINTTY_ERR)
+        err_exit("printty_start");
 
     if (atexit(printty_cleanup) == -1)
         err_exit("atexit");
