@@ -23,6 +23,71 @@ const char *Ss = NULL;
 const char *BE = NULL;
 const char *BD = NULL;
 
+static char base64_table[64] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+    'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+    'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+    'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+    'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+    'w', 'x', 'y', 'z', '0', '1', '2', '3',
+    '4', '5', '6', '7', '8', '9', '+', '/'
+};
+
+#define B64_MASK 0b111111000000000000000000
+
+char *printty_base64_encode(const char *s) {
+    assert(s);
+
+    size_t len = strlen(s);
+    size_t groups = len / 3;
+    size_t remainder = len % 3;
+    char *out = nullptr;
+
+    if (len == 0) {
+        hda_push(out, '\0');
+        return out;
+    }
+
+    uint32_t buf = 0;
+    const uint8_t *p = (uint8_t *)s;
+
+    for (size_t i = 0; i < groups; ++i) {
+        for (size_t y = 0; y < 3; ++y) {
+            buf += p[i * 3 + y];
+            if (y != 2)
+                buf <<= 8;
+        }
+
+        for (size_t y = 0; y < 4; ++y) {
+            hds_append_n(out, &base64_table[(buf & B64_MASK) >> 18], 1);
+            buf <<= 6;
+        }
+    }
+
+    if (remainder != 0) {
+        p = (uint8_t *)&s[len - remainder];
+
+        for (size_t i = 0; i < 3; ++i) {
+            if (i < remainder)
+                buf += *p++;
+
+            if (i != 2)
+                buf <<= 8;
+        }
+
+        for (size_t i = 0; i < remainder + 1; ++i) {
+            hds_append_n(out, &base64_table[(buf & B64_MASK) >> 18], 1);
+            buf <<= 6;
+        }
+
+        for (size_t i = 0; i < 3 - remainder; ++i)
+            hds_append_n(out, "=", 1);
+    }
+
+    return out;
+}
+
 static int write_cap(Printty *pt, const char *s, size_t n) {
     size_t num_wrote = 0;
 
@@ -156,12 +221,16 @@ PrinttyStatus printty_clipboard_copy(Printty *pt, char *b) {
     if (!Ms)
         return PRINTTY_ERR;
 
+    char *b64 = printty_base64_encode(b);
+
     unibi_var_t params[9] = {0};
     params[0] = unibi_var_from_str("c");
-    params[1] = unibi_var_from_str("SGk="/*Base64 encoded string*/);
+    params[1] = unibi_var_from_str(b64);
 
     char buf[64];
     size_t len = unibi_run(Ms, params, buf, sizeof(buf));
+    hds_free(b64);
+
     if (len > sizeof(buf))
         return PRINTTY_ERR;
 

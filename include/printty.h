@@ -128,6 +128,7 @@ void printty_destroy(Printty *pt);
 PrinttyStatus printty_start(Printty *pt);
 PrinttyStatus printty_stop(Printty *pt);
 
+char *printty_base64_encode(const char *s);
 char *printty_res_paste(Printty *pt);
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 PrinttyStatus printty_cbreak(Printty *pt);
