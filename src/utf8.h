@@ -10,7 +10,7 @@
 typedef struct {
     char32_t cp;
     char utf8[PRINTTY_UTF8_BUF_SIZE];
-} printty_unicode_data;
+} uc_data;
 
 typedef enum {
     PRINTTY_UTF8_CONTINUE,

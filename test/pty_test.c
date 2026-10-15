@@ -31,6 +31,7 @@ FILE *log_file;
 
 void pty_test_log(const llog_info *info) {
     fprintf(log_file, "%s\n", info->msg);
+    fflush(log_file);
 }
 
 llog logger = { .sink = pty_test_log };

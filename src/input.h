@@ -15,12 +15,15 @@ typedef struct PrinttyInput PrinttyInput;
 struct PrinttyInput {
     uint8_t *bytes;
     Trie *seqs;
-    printty_unicode_data *unicode;
+    uc_data *uc;
 };
 
+void cp_arr_log(uc_data *arr);
 void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n);
 PrinttyEvent printty_input_res_event(PrinttyInput *pt);
 PrinttyEvent printty_input_force_event(PrinttyInput *pt);
+PrinttyEvent printty_input_res_unicode(PrinttyInput *pt);
+size_t printty_input_res_paste(PrinttyInput *pt);
 const char *get_unibi_ext_str(unibi_term *term, const char *name);
 PrinttyInput *printty_input_create(unibi_term *term);
 void printty_input_destroy(PrinttyInput *pt);

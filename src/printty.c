@@ -149,6 +149,28 @@ PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
     return (rv == OK) ? PRINTTY_OK : PRINTTY_ERR;
 }
 
+PrinttyStatus printty_clipboard_copy(Printty *pt, char *b) {
+    assert(pt && b);
+
+    const char *Ms = get_unibi_ext_str(pt->term, "Ms");
+    if (!Ms)
+        return PRINTTY_ERR;
+
+    unibi_var_t params[9] = {0};
+    params[0] = unibi_var_from_str("c");
+    params[1] = unibi_var_from_str("SGk="/*Base64 encoded string*/);
+
+    char buf[64];
+    size_t len = unibi_run(Ms, params, buf, sizeof(buf));
+    if (len > sizeof(buf))
+        return PRINTTY_ERR;
+
+    if (write_cap(pt, buf, len) == FAIL)
+        return PRINTTY_ERR;
+
+    return PRINTTY_OK;
+}
+
 PrinttyStatus printty_set_color(Printty *pt, int fg, int bg) {
     if (fg != -1) {
         const char *setf = unibi_get_str(pt->term, unibi_set_a_foreground);
@@ -173,7 +195,7 @@ PrinttyStatus printty_set_color(Printty *pt, int fg, int bg) {
             return PRINTTY_ERR;
 
         unibi_var_t params[9] = {0};
-        params[0] = unibi_var_from_num(fg);
+        params[0] = unibi_var_from_num(bg);
 
         char buf[64];
         size_t len = unibi_run(setb, params, buf, sizeof(buf));
@@ -222,7 +244,7 @@ PrinttyStatus printty_exit_alt_screen(Printty *pt) {
     return PRINTTY_OK;
 }
 
-static PrinttyStatus printty_read(Printty *pt) {
+static PrinttyStatus printty_feed_bytes(Printty *pt) {
 #define BUF_SIZE 256
     assert(pt);
 
@@ -235,6 +257,147 @@ static PrinttyStatus printty_read(Printty *pt) {
 
     printty_input_feed_bytes(pt->input, buf, num_read);
     return PRINTTY_OK;
+}
+
+char *printty_res_paste(Printty *pt) {
+    char *paste_data = nullptr;
+    char *out = nullptr;
+    int tfd = start_timerfd(10);
+    if (tfd == FAIL)
+        return NULL;
+
+    struct pollfd pfd[] = {
+        { .fd = pt->tty_fd, .events = POLLIN },
+        { .fd = tfd,        .events = POLLIN },
+        { .fd = pt->sigfd,  .events = POLLIN }
+    };
+
+    while (true) {
+        size_t end_i = printty_input_res_paste(pt->input);
+
+        if (end_i != SIZE_MAX) {
+            LOG_INFO("paste end marker found at %zu", end_i);
+            assert(end_i <= hda_size(pt->input->uc));
+
+            for (size_t i = 0; i < end_i; ++i) {
+                PrinttyEvent pev = printty_input_res_unicode(pt->input);
+                if (pev.type != PRINTTY_UNICODE)
+                    goto fail;
+
+                hds_append(paste_data, pev.utf8);
+            }
+
+            break;
+        }
+
+        if (poll(pfd, ARRLEN(pfd), -1) == -1)
+            goto fail;
+
+        if (pfd[2].revents & POLLIN) {
+            if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
+                goto fail;
+
+            if (pt->ws_changed) {
+                pt->ws_changed = false;
+                PrinttyEvent pev = { .type = PRINTTY_RESIZE };
+                hda_push(pt->cached_pevs, pev);
+            }
+
+            continue;
+        }
+
+        if (pfd[1].revents & POLLIN) {
+            LOG_WARN("Timed out waiting for paste end marker");
+            goto fail;
+        }
+
+        if (pfd[0].revents & POLLIN) {
+            if (printty_feed_bytes(pt) != PRINTTY_OK)
+                goto fail;
+        }
+    }
+
+    out = paste_data;
+    close(tfd);
+    return out;
+
+fail:
+    hds_free(paste_data);
+    close(tfd);
+    return out;
+}
+
+PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
+    assert(pt);
+    assert(row);
+    assert(col);
+
+    PrinttyStatus status = PRINTTY_ERR;
+    PrinttyEvent pev;
+
+    if (write_unibi_cap(pt, unibi_user7) == FAIL)
+        return status;
+
+    int tfd = start_timerfd(50);
+
+    struct pollfd pfd[] = {
+        { .fd = pt->tty_fd, .events = POLLIN },
+        { .fd = tfd,        .events = POLLIN },
+        { .fd = pt->sigfd,  .events = POLLIN }
+    };
+
+    while (true) {
+        if (poll(pfd, ARRLEN(pfd), -1) == -1)
+            goto cleanup;
+
+        if (pfd[2].revents & POLLIN) {
+            if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
+                goto cleanup;
+
+            if (pt->ws_changed) {
+                pt->ws_changed = false;
+                PrinttyEvent pev = { .type = PRINTTY_RESIZE };
+                hda_push(pt->cached_pevs, pev);
+            }
+
+            continue;
+        }
+
+        if (pfd[1].revents & POLLIN)
+            goto cleanup;
+
+        if (pfd[0].revents & POLLIN) {
+            PrinttyStatus rv;
+            if ((rv = printty_feed_bytes(pt)) != PRINTTY_OK) {
+                status = PRINTTY_ERR;
+                goto cleanup;
+            }
+
+            while (true) {
+                pev = printty_input_res_event(pt->input);
+
+                if (pev.type == PRINTTY_CURSOR_POS) {
+                    memcpy(row, pev.opaque, sizeof(int));
+                    memcpy(col, &pev.opaque[sizeof(int)], sizeof(int));
+                    --*row;
+                    --*col;
+                    status = PRINTTY_OK;
+                    goto cleanup;
+
+                } else if (pev.type != PRINTTY_AMBIG &&
+                           pev.type != PRINTTY_NONE) {
+                    hda_push(pt->cached_pevs, pev);
+
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+cleanup:
+    close(tfd);
+    return status;
 }
 
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
@@ -331,7 +494,7 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
 
         if (pfd[0].revents & POLLIN) {
             PrinttyStatus rv;
-            if ((rv = printty_read(pt)) != PRINTTY_OK) {
+            if ((rv = printty_feed_bytes(pt)) != PRINTTY_OK) {
                 status = PRINTTY_ERR;
                 goto cleanup;
             }
@@ -341,79 +504,6 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
 cleanup:
     if (tfd != -1)
         close(tfd);
-    return status;
-}
-
-PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
-    assert(pt);
-    assert(row);
-    assert(col);
-
-    PrinttyStatus status = PRINTTY_ERR;
-    PrinttyEvent pev;
-
-    if (write_unibi_cap(pt, unibi_user7) == FAIL)
-        return status;
-
-    int tfd = start_timerfd(100); /* TODO: remove magic number */
-
-    struct pollfd pfd[] = {
-        { .fd = pt->tty_fd, .events = POLLIN },
-        { .fd = tfd,        .events = POLLIN },
-        { .fd = pt->sigfd,  .events = POLLIN }
-    };
-
-    while (true) {
-        if (poll(pfd, ARRLEN(pfd), -1) == -1)
-            goto cleanup;
-
-        if (pfd[2].revents & POLLIN) {
-            if (printty_get_term_size(pt, NULL, NULL) == PRINTTY_ERR)
-                goto cleanup;
-
-            if (pt->ws_changed) {
-                pt->ws_changed = false;
-                PrinttyEvent pev = { .type = PRINTTY_RESIZE };
-                hda_push(pt->cached_pevs, pev);
-            }
-
-            continue;
-        }
-
-        if (pfd[1].revents & POLLIN)
-            goto cleanup;
-
-        if (pfd[0].revents & POLLIN) {
-            PrinttyStatus rv;
-            if ((rv = printty_read(pt)) != PRINTTY_OK) {
-                status = PRINTTY_ERR;
-                goto cleanup;
-            }
-
-            while (true) {
-                pev = printty_input_res_event(pt->input);
-
-                if (pev.type == PRINTTY_CURSOR_POS) {
-                    memcpy(row, pev.opaque, sizeof(int));
-                    memcpy(col, &pev.opaque[sizeof(int)], sizeof(int));
-                    --*row;
-                    --*col;
-                    status = PRINTTY_OK;
-                    goto cleanup;
-
-                } else if (pev.type != PRINTTY_AMBIG &&
-                           pev.type != PRINTTY_NONE) {
-                    hda_push(pt->cached_pevs, pev);
-
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-cleanup:
-    close(tfd);
     return status;
 }
 

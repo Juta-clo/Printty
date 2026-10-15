@@ -103,7 +103,6 @@ typedef enum {
     PRINTTY_KEY,
     PRINTTY_CURSOR_POS,
     PRINTTY_PASTE_BEGIN,
-    PRINTTY_PASTE_DATA,
     PRINTTY_PASTE_END,
     PRINTTY_AMBIG,
     PRINTTY_NONE,
@@ -115,7 +114,7 @@ typedef struct {
     PrinttyInputType type;
 
     union {
-        uint32_t codepoint;
+        uint32_t cp;
         PrinttyInputKey key;
         /* payload data for reports like mouse position */
         uint8_t opaque[32];
@@ -129,6 +128,7 @@ void printty_destroy(Printty *pt);
 PrinttyStatus printty_start(Printty *pt);
 PrinttyStatus printty_stop(Printty *pt);
 
+char *printty_res_paste(Printty *pt);
 PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev);
 PrinttyStatus printty_cbreak(Printty *pt);
 PrinttyStatus printty_raw(Printty *pt);
@@ -137,6 +137,7 @@ void printty_set_suspend_mask(Printty *pt, sigset_t mask);
 PrinttyStatus printty_get_term_size(Printty *pt, int *rows, int *cols);
 
 /* Wrappers for formatting and writing unibi strings */
+PrinttyStatus printty_clipboard_copy(Printty *pt, char *b);
 PrinttyStatus printty_alt_screen(Printty *pt);
 PrinttyStatus printty_exit_alt_screen(Printty *pt);
 PrinttyStatus printty_cursor_move(Printty *pt, int row, int col);

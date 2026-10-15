@@ -42,7 +42,7 @@ TEST(event, cached_events_have_priority) {
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
-    TEST_ASSERT_EQUAL_CHAR('a', pev.codepoint);
+    TEST_ASSERT_EQUAL_CHAR('a', pev.cp);
     TEST_ASSERT_EQUAL_CHAR('a', pev.utf8[0]);
     TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->cached_pevs));
 }
@@ -53,7 +53,7 @@ TEST(event, escape_sequence_timeout) {
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
-    TEST_ASSERT_EQUAL_CHAR('\x1b', pev.codepoint);
+    TEST_ASSERT_EQUAL_CHAR('\x1b', pev.cp);
     TEST_ASSERT_EQUAL_CHAR('\x1b', pev.utf8[0]);
 }
 
@@ -88,7 +88,7 @@ TEST(event, get_cursor_position_with_events_in_buffer) {
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
-    TEST_ASSERT_EQUAL_CHAR('a', pev.codepoint);
+    TEST_ASSERT_EQUAL_CHAR('a', pev.cp);
     TEST_ASSERT_EQUAL_CHAR('a', pev.utf8[0]);
 }
 
@@ -99,12 +99,12 @@ TEST(event, get_event_drops_payload_events) {
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
-    TEST_ASSERT_EQUAL_CHAR('a', pev.codepoint);
+    TEST_ASSERT_EQUAL_CHAR('a', pev.cp);
     TEST_ASSERT_EQUAL_CHAR('a', pev.utf8[0]);
 
     TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->cached_pevs));
     TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->input->bytes));
-    TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->input->unicode));
+    TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->input->uc));
 }
 
 TEST(event, term_size_is_updated_by_term_size_getter) {
@@ -148,8 +148,59 @@ TEST(event, resize_event_with_buffered_events) {
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
-    TEST_ASSERT_EQUAL_CHAR('a', pev.codepoint);
+    TEST_ASSERT_EQUAL_CHAR('a', pev.cp);
     TEST_ASSERT_EQUAL_CHAR('a', pev.utf8[0]);
+}
+
+TEST(event, resolving_bracketed_paste) {
+    hda_insert_buf(pt->input->bytes, 0, 6, "\x1b[200~");
+    TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
+    TEST_ASSERT_EQUAL_INT(PRINTTY_PASTE_BEGIN, pev.type);
+    TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->input->bytes));
+
+    hda_insert_buf(pt->input->bytes, 0, 17, "PASTE\nDATA!\x1b[201~");
+    char *paste_data = printty_res_paste(pt);
+    TEST_ASSERT_NOT_NULL(paste_data);
+    TEST_ASSERT_GREATER_OR_EQUAL_size_t(11, hds_len(paste_data));
+    TEST_ASSERT_EQUAL_STRING("PASTE\nDATA!", paste_data);
+
+    TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->input->bytes));
+    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_res_event(pt->input).type);
+
+    hda_free(paste_data);
+}
+
+TEST(event, resolving_bracketed_paste_that_arrives_sequentially) {
+    hda_insert_buf(pt->input->bytes, 0, 7, "\x1b[200~X");
+    TEST_ASSERT_EQUAL_INT(PRINTTY_OK, printty_get_event(pt, &pev));
+    TEST_ASSERT_EQUAL_INT(PRINTTY_PASTE_BEGIN, pev.type);
+    TEST_ASSERT_EQUAL_size_t(1, hda_size(pt->input->uc));
+    TEST_ASSERT_EQUAL_size_t(0, hda_size(pt->input->bytes));
+
+    hda_insert_buf(pt->input->bytes, 0, 6, "PASTE\n");
+    char *paste_data = printty_res_paste(pt);
+    TEST_ASSERT_NULL(paste_data);
+
+    hda_insert_buf(pt->input->bytes, 0, 3, "\x1b[D");
+    paste_data = printty_res_paste(pt);
+    TEST_ASSERT_NULL(paste_data);
+
+    hda_insert_buf(pt->input->bytes, 0, 5, "\x1b[201");
+    paste_data = printty_res_paste(pt);
+    TEST_ASSERT_NULL(paste_data);
+
+    hda_insert_buf(pt->input->bytes, 0, 2, "~X");
+    paste_data = printty_res_paste(pt);
+    TEST_ASSERT_NOT_NULL(paste_data);
+    TEST_ASSERT_EQUAL_size_t(10, hds_len(paste_data));
+    TEST_ASSERT_EQUAL_STRING("XPASTE\n\x1b[D", paste_data);
+
+    pev = printty_input_res_event(pt->input);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
+    TEST_ASSERT_EQUAL_UINT32('X', pev.cp);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY("X", pev.utf8, 1);
+
+    hda_free(paste_data);
 }
 
 /************ Test runner ************/
@@ -164,4 +215,6 @@ TEST_GROUP_RUNNER(event) {
     RUN_TEST_CASE(event, term_size_is_updated_by_term_size_getter);
     RUN_TEST_CASE(event, resize_event);
     RUN_TEST_CASE(event, resize_event_with_buffered_events);
+    RUN_TEST_CASE(event, resolving_bracketed_paste);
+    RUN_TEST_CASE(event, resolving_bracketed_paste_that_arrives_sequentially);
 }

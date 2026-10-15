@@ -30,7 +30,7 @@ void feed_sequence(enum unibi_string uc) {
 
 void verify_ascii(PrinttyEvent *pev, uint8_t c) {
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev->type);
-    TEST_ASSERT_EQUAL_UINT32((uint32_t)c, pev->codepoint);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)c, pev->cp);
     TEST_ASSERT_EQUAL_UINT8(c, pev->utf8[0]);
 }
 
@@ -40,7 +40,7 @@ void verify_multibyte(PrinttyEvent *pev, const char *s, size_t len) {
         TEST_FAIL_MESSAGE("mbrtoc32 decode fail");
 
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev->type);
-    TEST_ASSERT_EQUAL_UINT32(cp, pev->codepoint);
+    TEST_ASSERT_EQUAL_UINT32(cp, pev->cp);
 
     for (size_t i = 0; i < len; ++i)
         TEST_ASSERT_EQUAL_UINT8(s[i], pev->utf8[i]);
@@ -289,7 +289,7 @@ TEST(input, embedded_nul_is_not_string_terminated) {
 
     pev = printty_input_res_event(input);
     TEST_ASSERT_EQUAL_INT(PRINTTY_UNICODE, pev.type);
-    TEST_ASSERT_EQUAL_UINT32(0, pev.codepoint);
+    TEST_ASSERT_EQUAL_UINT32(0, pev.cp);
 
     verify_unicode_event("b");
 }
