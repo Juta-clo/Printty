@@ -217,27 +217,41 @@ PrinttyStatus printty_cursor_move(Printty *pt, int row, int col) {
 PrinttyStatus printty_clipboard_copy(Printty *pt, char *b) {
     assert(pt && b);
 
+    PrinttyStatus rv = PRINTTY_ERR;
+    char *b64 = nullptr;
+    char *buf = nullptr;
+    size_t buf_len;
+    unibi_var_t params[9] = {0};
+
     const char *Ms = get_unibi_ext_str(pt->term, "Ms");
     if (!Ms)
-        return PRINTTY_ERR;
+        goto cleanup;
 
-    char *b64 = printty_base64_encode(b);
+    b64 = printty_base64_encode(b);
+    buf_len = hda_size(b64) + 64;
 
-    unibi_var_t params[9] = {0};
+    buf = malloc(buf_len);
+    if (!buf)
+        goto cleanup;
+
     params[0] = unibi_var_from_str("c");
     params[1] = unibi_var_from_str(b64);
 
-    char buf[64];
-    size_t len = unibi_run(Ms, params, buf, sizeof(buf));
-    hds_free(b64);
+    size_t len = unibi_run(Ms, params, buf, buf_len);
 
-    if (len > sizeof(buf))
-        return PRINTTY_ERR;
+    if (len > buf_len)
+        goto cleanup;
 
     if (write_cap(pt, buf, len) == FAIL)
-        return PRINTTY_ERR;
+        goto cleanup;
 
-    return PRINTTY_OK;
+    rv = PRINTTY_OK;
+
+cleanup:
+    free(buf);
+    hds_free(b64);
+
+    return rv;
 }
 
 PrinttyStatus printty_set_color(Printty *pt, int fg, int bg) {

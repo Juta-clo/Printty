@@ -134,9 +134,6 @@ static bool printty_resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
     char32_t *cps = nullptr;
     size_t len = hda_size(pt->uc);
 
-    if (check_trie(pt, pev))
-        return true;
-
     for (size_t i = 0; i < len; ++i) {
         hda_push(cps, pt->uc[i].cp);
 
@@ -155,8 +152,9 @@ static bool printty_resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
             get_cpr(&data, pev);
         } else if (data.final_byte == '~') {
             get_csi_tilde(&data, pev);
-        } else
+        } else {
             pev->type = PRINTTY_UNKNOWN_CSI;
+        }
 
         rv = true;
         hda_delete(pt->uc, 0, n);
@@ -219,6 +217,9 @@ PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
     if (printty_resolve_csi(pt, &pev)) {
         return pev;
     } else {
+        if (check_trie(pt, &pev))
+            return pev;
+
         return pop_uc_ev(pt);
     }
 }
