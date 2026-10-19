@@ -8,6 +8,50 @@
 #define ESC '\x1b'
 #define HDA_NULL nullptr
 
+static res_status csi_res_cpr(csi_data *data, PrinttyEvent *pev) {
+    assert(data && pev);
+
+    if (hda_size(data->params) != 2 ||
+        hda_size(data->params[0]) != 1 || hda_size(data->params[1]) != 1 ||
+        data->params[0][0] == 0 || data->params[1][0] == 0)
+    {
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        return RES_UNKNOWN;
+    }
+
+    int row = (data->params[0][0] == -1) ? 1 : data->params[0][0];
+    int col = (data->params[1][0] == -1) ? 1 : data->params[1][0];
+
+    memcpy(pev->opaque, &row, sizeof(int));
+    memcpy(&pev->opaque[sizeof(int)], &col, sizeof(int));
+
+    pev->type = PRINTTY_CURSOR_POS;
+    return RES_OK;
+}
+
+static res_status csi_res_tilde(csi_data *data, PrinttyEvent *pev) {
+    assert(data && pev);
+
+    if (hda_size(data->params) != 1 || hda_size(data->params[0]) != 1) {
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        return RES_UNKNOWN;
+    }
+
+    switch (data->params[0][0]) {
+    case 200:
+        pev->type = PRINTTY_PASTE_BEGIN;
+        break;
+    case 201:
+        pev->type = PRINTTY_PASTE_END;
+        break;
+    default:
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        return RES_UNKNOWN;
+    }
+
+    return RES_OK;
+}
+
 static void free_params(csi_data *data) {
     assert(data);
 
@@ -154,4 +198,51 @@ int csi_param_decode(csi_data *data) {
 fail:
     free_params(data);
     return -1;
+}
+
+res_status resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
+    assert(pt && pev);
+
+    res_status status = RES_INVALID;
+    csi_data data = {0};
+    char32_t *cps = nullptr;
+    size_t len = hda_size(pt->uc);
+
+    for (size_t i = 0; i < len; ++i) {
+        hda_push(cps, pt->uc[i].cp);
+
+        size_t n = csi_decode(cps, hda_size(cps), &data);
+        if (n == CSI_INVALID) {
+            goto cleanup;
+        } else if (n == CSI_AMBIG) {
+            pev->type = PRINTTY_AMBIG;
+            continue;
+        }
+
+        if (csi_param_decode(&data) == -1)
+            goto cleanup;
+
+        if (data.final_byte == 'R') {
+            status = csi_res_cpr(&data, pev);
+        } else if (data.final_byte == '~') {
+            status = csi_res_tilde(&data, pev);
+        } else {
+            LOG_INFO("unknown csi: %.*s", (int)hda_size(data.csi), data.csi);
+            pev->type = PRINTTY_UNKNOWN_CSI;
+            status = RES_UNKNOWN;
+        }
+
+        hda_delete(pt->uc, 0, n);
+        csi_free_data(&data);
+        goto cleanup;
+    }
+
+    /* ambiguous event */
+    status = RES_OK;
+
+cleanup:
+    hda_free(cps);
+    csi_free_data(&data);
+
+    return status;
 }

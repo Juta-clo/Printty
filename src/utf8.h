@@ -3,33 +3,21 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <uchar.h>
-
-#define PRINTTY_UTF8_BUF_SIZE 5
-
-typedef struct {
-    char32_t cp;
-    char utf8[PRINTTY_UTF8_BUF_SIZE];
-} uc_data;
+#include "input.h"
 
 typedef enum {
-    PRINTTY_UTF8_CONTINUE,
-    PRINTTY_UTF8_LEADER,
-    PRINTTY_UTF8_ASCII,
-    PRINTTY_UTF8_INVALID,
-} printty_utf8_byte_type;
+    UTF8_CONTINUE,
+    UTF8_LEADER,
+    UTF8_ASCII,
+    UTF8_INVALID,
+} utf8_type;
 
 typedef enum {
-    PRINTTY_UTF8_DECODE_OK,
-    PRINTTY_UTF8_DECODE_WAIT,
-    PRINTTY_UTF8_DECODE_FAIL,
-} printty_utf8_decode_status;
+    UTF8_OK,
+    UTF8_WAIT,
+    UTF8_BAD,
+} utf8_status;
 
-typedef struct {
-    printty_utf8_decode_status status;
-    uint32_t codepoint;
-} printty_utf8_decode_info;
-
-int utf8_decode(uint8_t *bytes, size_t n, printty_utf8_decode_info *info);
+res_status utf8_res_cps(PrinttyInput *pt, PrinttyEvent *pev);
 
 #endif

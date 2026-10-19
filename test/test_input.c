@@ -68,7 +68,7 @@ void verify_unicode_event_n(const char *s, size_t len) {
 
 void verify_unicode_force_event(const char *s) {
     size_t len = strlen(s);
-    pev = printty_input_force_event(input);
+    pev = printty_input_force_event(input, false);
 
     if (len == 1) {
         verify_ascii(&pev, s[0]);
@@ -189,19 +189,21 @@ TEST(input, force_on_incomplete_unicode_is_still_ambiguous) {
 
     feed_bytes(b1);
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_force_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG,
+            printty_input_force_event(input, false).type);
 }
 
 TEST(input, resolve_and_force_with_no_bytes) {
     TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_res_event(input).type);
-    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE, printty_input_force_event(input).type);
+    TEST_ASSERT_EQUAL_INT(PRINTTY_NONE,
+            printty_input_force_event(input, false).type);
 }
 
 /* relies on SS3 handling */
 IGNORE_TEST(input, feed_escape_sequence_byte_by_byte) {
     feed_bytes("\x1b");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
-    feed_bytes("O");
+    feed_bytes("[");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
     feed_bytes("D");
     verify_key_event(PRINTTY_LEFT);

@@ -10,18 +10,11 @@
 #include "csi.h"
 #include "linc_tools.h"
 #include "printty_internals.h"
+#include "utf8.h"
 
 #define MIN(a, b)   ((a < b) ? a : b)
 #define MAX(a, b)   ((a > b) ? a : b)
 #define streq(a, b) (strcmp(a, b) == 0)
-
-void cp_arr_log(uc_data *arr) {
-    char *bytes = nullptr;
-    for (size_t i = 0; i < hda_size(arr); ++i)
-        hds_append(bytes, arr[i].utf8);
-
-    hds_free(bytes);
-}
 
 static bool cp_arr_equal(uc_data *a, char32_t *b, size_t n) {
     assert(a && b);
@@ -40,65 +33,25 @@ static bool cp_arr_equal(uc_data *a, char32_t *b, size_t n) {
     return true;
 }
 
-static PrinttyEvent pop_uc_ev(PrinttyInput *pt) {
+static PrinttyEvent pop_uc_ev(PrinttyInput *pt, bool uc_only) {
     PrinttyEvent pev;
 
-    if (pt->uc[0].cp == '\r' || pt->uc[0].cp == '\n') {
+    if (!uc_only && (pt->uc[0].cp == '\r' || pt->uc[0].cp == '\n')) {
         pev.type = PRINTTY_KEY;
         pev.key = PRINTTY_ENTER;
-    } else if (pt->uc[0].cp == 0x08 || pt->uc[0].cp == 0x7f) {
+    } else if (!uc_only && (pt->uc[0].cp == 0x08 || pt->uc[0].cp == 0x7f)) {
         pev.type = PRINTTY_KEY;
         pev.key = PRINTTY_BACKSPACE;
     } else {
         pev.type = PRINTTY_UNICODE;
         pev.cp = pt->uc[0].cp;
-        memcpy(pev.utf8, pt->uc[0].utf8, PRINTTY_UTF8_BUF_SIZE);
+        memcpy(pev.utf8, pt->uc[0].utf8, UTF8_BUF_SIZE);
     }
 
     hda_delete(pt->uc, 0, 1);
     return pev;
 }
 
-static void get_cpr(csi_data *data, PrinttyEvent *pev) {
-    assert(data && pev);
-
-    if (hda_size(data->params) != 2 ||
-        hda_size(data->params[0]) != 1 || hda_size(data->params[1]) != 1 ||
-        data->params[0][0] == 0 || data->params[1][0] == 0)
-    {
-        pev->type = PRINTTY_UNKNOWN_CSI;
-        return;
-    }
-
-    int row = (data->params[0][0] == -1) ? 1 : data->params[0][0];
-    int col = (data->params[1][0] == -1) ? 1 : data->params[1][0];
-
-    memcpy(pev->opaque, &row, sizeof(int));
-    memcpy(&pev->opaque[sizeof(int)], &col, sizeof(int));
-
-    pev->type = PRINTTY_CURSOR_POS;
-}
-
-static void get_csi_tilde(csi_data *data, PrinttyEvent *pev) {
-    assert(data && pev);
-
-    if (hda_size(data->params) != 1 || hda_size(data->params[0]) != 1) {
-        pev->type = PRINTTY_UNKNOWN_CSI;
-        return;
-    }
-
-    switch (data->params[0][0]) {
-    case 200 /*PS*/:
-        pev->type = PRINTTY_PASTE_BEGIN;
-        break;
-    case 201 /*PE*/:
-        pev->type = PRINTTY_PASTE_END;
-        break;
-    default:
-        pev->type = PRINTTY_UNKNOWN_CSI;
-        break;;
-    }
-}
 
 static bool check_trie(PrinttyInput *pt, PrinttyEvent *pev) {
     char *chs = nullptr;
@@ -126,76 +79,6 @@ static bool check_trie(PrinttyInput *pt, PrinttyEvent *pev) {
     return false;
 }
 
-static bool printty_resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
-    assert(pt && pev);
-
-    bool rv = false;
-    csi_data data = {0};
-    char32_t *cps = nullptr;
-    size_t len = hda_size(pt->uc);
-
-    for (size_t i = 0; i < len; ++i) {
-        hda_push(cps, pt->uc[i].cp);
-
-        size_t n = csi_decode(cps, hda_size(cps), &data);
-        if (n == CSI_INVALID) {
-            goto cleanup;
-        } else if (n == CSI_AMBIG) {
-            pev->type = PRINTTY_AMBIG;
-            continue;
-        }
-
-        if (csi_param_decode(&data) == -1)
-            goto cleanup;
-
-        if (data.final_byte == 'R') {
-            get_cpr(&data, pev);
-        } else if (data.final_byte == '~') {
-            get_csi_tilde(&data, pev);
-        } else {
-            pev->type = PRINTTY_UNKNOWN_CSI;
-        }
-
-        rv = true;
-        hda_delete(pt->uc, 0, n);
-        csi_free_data(&data);
-        goto cleanup;
-    }
-
-    /* ambiguous event */
-    rv = true;
-
-cleanup:
-    hda_free(cps);
-    csi_free_data(&data);
-
-    return rv;
-}
-
-static void printty_resolve_codepoints(PrinttyInput *pt) {
-    printty_utf8_decode_info info = {0};
-    size_t n;
-
-    while (true) {
-        n = utf8_decode(pt->bytes, hda_size(pt->bytes), &info);
-        assert(n <= hda_size(pt->bytes));
-
-        if (info.status == PRINTTY_UTF8_DECODE_OK) {
-            uc_data utf8_data = { .cp = info.codepoint };
-            memcpy(utf8_data.utf8, pt->bytes, n);
-
-            hda_push(pt->uc, utf8_data);
-            hda_delete(pt->bytes, 0, n);
-
-        } else if (info.status == PRINTTY_UTF8_DECODE_FAIL) {
-            hda_delete(pt->bytes, 0, n);
-
-        } else if (info.status == PRINTTY_UTF8_DECODE_WAIT) {
-            break;
-        }
-    }
-}
-
 void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n) {
     assert(pt && s && n >= 0);
     hda_insert_buf(pt->bytes, hda_size(pt->bytes), n, s);
@@ -204,69 +87,38 @@ void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n) {
 PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
     assert(pt);
 
-    printty_resolve_codepoints(pt);
-
-    if (hda_size(pt->bytes) == 0 && hda_size(pt->uc) == 0)
-        return (PrinttyEvent){ .type = PRINTTY_NONE };
-
-    if (hda_size(pt->uc) == 0)
-        return (PrinttyEvent){ .type = PRINTTY_AMBIG };
-
     PrinttyEvent pev;
+    res_status status;
 
-    if (printty_resolve_csi(pt, &pev)) {
+    if (utf8_res_cps(pt, &pev) == RES_OK)
         return pev;
-    } else {
-        if (check_trie(pt, &pev))
-            return pev;
 
-        return pop_uc_ev(pt);
-    }
+    if (check_trie(pt, &pev))
+        return pev;
+
+    if ((status = resolve_csi(pt, &pev)) != RES_INVALID)
+        return pev;
+
+    return pop_uc_ev(pt, false);
 }
 
-PrinttyEvent printty_input_force_event(PrinttyInput *pt) {
+PrinttyEvent printty_input_force_event(PrinttyInput *pt, bool uc_only) {
     assert(pt);
-
-    printty_resolve_codepoints(pt);
-
-    if (hda_size(pt->bytes) == 0 && hda_size(pt->uc) == 0)
-        return (PrinttyEvent){ .type = PRINTTY_NONE };
-
-    if (hda_size(pt->uc) == 0)
-        return (PrinttyEvent){ .type = PRINTTY_AMBIG };
-
-    return pop_uc_ev(pt);
-}
-
-PrinttyEvent printty_input_res_unicode(PrinttyInput *pt) {
-    assert(pt);
-
-    printty_resolve_codepoints(pt);
-
-    if (hda_size(pt->bytes) == 0 && hda_size(pt->uc) == 0)
-        return (PrinttyEvent){ .type = PRINTTY_NONE };
-
-    if (hda_size(pt->uc) == 0)
-        return (PrinttyEvent){ .type = PRINTTY_AMBIG };
 
     PrinttyEvent pev;
-    pev.type = PRINTTY_UNICODE;
-    pev.cp = pt->uc[0].cp;
-    memcpy(pev.utf8, pt->uc[0].utf8, PRINTTY_UTF8_BUF_SIZE);
 
-    hda_delete(pt->uc, 0, 1);
+    if (utf8_res_cps(pt, &pev) == RES_OK)
+        return pev;
 
-    return pev;
+    return pop_uc_ev(pt, uc_only);
 }
 
 size_t printty_input_res_paste(PrinttyInput *pt) {
     assert(pt);
 
-    printty_resolve_codepoints(pt);
+    PrinttyEvent pev;
 
-    if (hda_size(pt->bytes) == 0 && hda_size(pt->uc) == 0)
-        return SIZE_MAX;
-    if (hda_size(pt->uc) == 0)
+    if (utf8_res_cps(pt, &pev) == RES_OK)
         return SIZE_MAX;
 
     for (size_t i = 0; i < hda_size(pt->uc); ++i) {
@@ -311,16 +163,10 @@ PrinttyInput *printty_input_create(unibi_term *term) {
 
     pt->seqs = trie_create();
 
-    for (int uc = unibi_string_begin_ + 1; uc < unibi_string_end_; ++uc) {
-        for (size_t ptc = 0; ptc < PRINTTY_MAX; ++ptc) {
-            const char *name = partty_keys[ptc].name;
-
-            if (streq(unibi_name_str(uc), name)) {
-                const char *unibi_str = unibi_get_str(term, uc);
-                if (unibi_str)
-                    trie_add(pt->seqs, unibi_str, &ptc, sizeof(int));
-            }
-        }
+    for (size_t i = 0; i < PRINTTY_MAX; ++i) {
+        const char *unibi_str = unibi_get_str(term, printty_keys[i].us);
+        if (unibi_str)
+            trie_add(pt->seqs, unibi_str, &i, sizeof(int));
     }
 
     return pt;

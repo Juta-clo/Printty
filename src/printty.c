@@ -363,7 +363,7 @@ char *printty_res_paste(Printty *pt) {
             assert(end_i <= hda_size(pt->input->uc));
 
             for (size_t i = 0; i < end_i; ++i) {
-                PrinttyEvent pev = printty_input_res_unicode(pt->input);
+                PrinttyEvent pev = printty_input_force_event(pt->input, true);
                 if (pev.type != PRINTTY_UNICODE)
                     goto fail;
 
@@ -525,7 +525,7 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
             }
 
         } else if (timer_done) {
-            *pev = printty_input_force_event(pt->input);
+            *pev = printty_input_force_event(pt->input, false);
 
             if (pev->type != PRINTTY_NONE && pev->type != PRINTTY_AMBIG) {
                 status = PRINTTY_OK;
