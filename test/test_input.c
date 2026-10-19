@@ -200,7 +200,7 @@ TEST(input, resolve_and_force_with_no_bytes) {
 }
 
 /* relies on SS3 handling */
-IGNORE_TEST(input, feed_escape_sequence_byte_by_byte) {
+TEST(input, feed_escape_sequence_byte_by_byte) {
     feed_bytes("\x1b");
     TEST_ASSERT_EQUAL_INT(PRINTTY_AMBIG, printty_input_res_event(input).type);
     feed_bytes("[");

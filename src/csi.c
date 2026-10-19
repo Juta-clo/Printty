@@ -38,15 +38,35 @@ static res_status csi_res_tilde(csi_data *data, PrinttyEvent *pev) {
     }
 
     switch (data->params[0][0]) {
-    case 200:
-        pev->type = PRINTTY_PASTE_BEGIN;
-        break;
-    case 201:
-        pev->type = PRINTTY_PASTE_END;
-        break;
+    case 200: pev->type = PRINTTY_PASTE_BEGIN; break;
+    case 201: pev->type = PRINTTY_PASTE_END;   break;
     default:
         pev->type = PRINTTY_UNKNOWN_CSI;
         return RES_UNKNOWN;
+    }
+
+    return RES_OK;
+}
+
+static res_status csi_res_cursor_keys(csi_data *data, PrinttyEvent *pev) {
+    if (hda_size(data->params) != 0) {
+        pev->type = PRINTTY_UNKNOWN_CSI;
+        return RES_UNKNOWN;
+    }
+
+    pev->type = PRINTTY_KEY;
+
+    switch (data->final_byte) {
+        case 'A': pev->key = PRINTTY_UP;    break;
+        case 'B': pev->key = PRINTTY_DOWN;  break;
+        case 'C': pev->key = PRINTTY_RIGHT; break;
+        case 'D': pev->key = PRINTTY_LEFT;  break;
+        case 'H': pev->key = PRINTTY_HOME;  break;
+        case 'E': pev->key = PRINTTY_BEG;   break;
+        case 'F': pev->key = PRINTTY_END;   break;
+        default:
+            pev->type = PRINTTY_UNKNOWN_CSI;
+            return RES_UNKNOWN;
     }
 
     return RES_OK;
@@ -222,15 +242,24 @@ res_status resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
         if (csi_param_decode(&data) == -1)
             goto cleanup;
 
-        if (data.final_byte == 'R') {
+        switch (data.final_byte) {
+        case 'R':
             status = csi_res_cpr(&data, pev);
-        } else if (data.final_byte == '~') {
+            break;
+        case '~':
             status = csi_res_tilde(&data, pev);
-        } else {
-            LOG_INFO("unknown csi: %.*s", (int)hda_size(data.csi), data.csi);
+            break;
+        case 'A': case 'B': case 'C': case 'D':
+        case 'H': case 'E': case 'F':
+            status = csi_res_cursor_keys(&data, pev);
+            break;
+        default:
             pev->type = PRINTTY_UNKNOWN_CSI;
             status = RES_UNKNOWN;
         }
+
+        if (pev->type == PRINTTY_UNKNOWN_CSI)
+            LOG_INFO("unknown csi: %.*s", (int)hda_size(data.csi), data.csi);
 
         hda_delete(pt->uc, 0, n);
         csi_free_data(&data);
