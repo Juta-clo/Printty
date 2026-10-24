@@ -3,6 +3,7 @@
 #include "utf8.h"
 #include "input.h"
 #include "printty.h"
+#include <linc/hda.h>
 
 static bool is_continue(uint8_t b) {
     return b & 0x80 && !(b & 0x40);
@@ -131,18 +132,18 @@ static utf8_status decode(uint8_t *bytes, size_t *n, char32_t *cp) {
 static void resolve_codepoints(PrinttyInput *pt) {
     while (true) {
         char32_t cp;
-        size_t n = hda_size(pt->bytes);
+        size_t n = linc_hda_size(pt->bytes);
         utf8_status status = decode(pt->bytes, &n, &cp);
 
         if (status == UTF8_OK) {
             uc_data utf8_data = { .cp = cp };
             memcpy(utf8_data.utf8, pt->bytes, n);
 
-            hda_push(pt->uc, utf8_data);
-            hda_delete(pt->bytes, 0, n);
+            linc_hda_push(pt->uc, utf8_data);
+            linc_hda_delete(pt->bytes, 0, n);
 
         } else if (status == UTF8_BAD) {
-            hda_delete(pt->bytes, 0, n);
+            linc_hda_delete(pt->bytes, 0, n);
 
         } else if (status == UTF8_WAIT) {
             break;
@@ -153,12 +154,12 @@ static void resolve_codepoints(PrinttyInput *pt) {
 res_status utf8_res_cps(PrinttyInput *pt, PrinttyEvent *pev) {
     resolve_codepoints(pt);
 
-    if (hda_size(pt->bytes) == 0 && hda_size(pt->uc) == 0) {
+    if (linc_hda_size(pt->bytes) == 0 && linc_hda_size(pt->uc) == 0) {
         pev->type = PRINTTY_NONE;
         return RES_OK;
     }
 
-    if (hda_size(pt->uc) == 0) {
+    if (linc_hda_size(pt->uc) == 0) {
         pev->type = PRINTTY_AMBIG;
         return RES_OK;
     }

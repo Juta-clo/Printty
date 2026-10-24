@@ -1,5 +1,5 @@
 #include <string.h>
-#include "linc_tools.h"
+#include <linc/hda.h>
 #include "unity.h"
 #include "unity_fixture.h"
 #include "csi.h"
@@ -30,7 +30,7 @@ static csi_data data;
 
 #define assert_uint8_array(_exp, _hda) \
     do { \
-        TEST_ASSERT_EQUAL_size_t(strlen(_exp), hda_size(_hda)); \
+        TEST_ASSERT_EQUAL_size_t(strlen(_exp), linc_hda_size(_hda)); \
         TEST_ASSERT_EQUAL_UINT8_ARRAY(_exp, _hda, strlen(_exp)); \
     } while (false)
 

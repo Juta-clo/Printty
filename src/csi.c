@@ -2,8 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <linc/hda.h>
+#include <linc/log.h>
 #include "csi.h"
-#include "linc_tools.h"
 
 #define ESC '\x1b'
 #define HDA_NULL nullptr
@@ -11,8 +12,8 @@
 static res_status csi_res_cpr(csi_data *data, PrinttyEvent *pev) {
     assert(data && pev);
 
-    if (hda_size(data->params) != 2 ||
-        hda_size(data->params[0]) != 1 || hda_size(data->params[1]) != 1 ||
+    if (linc_hda_size(data->params) != 2 ||
+        linc_hda_size(data->params[0]) != 1 || linc_hda_size(data->params[1]) != 1 ||
         data->params[0][0] == 0 || data->params[1][0] == 0)
     {
         pev->type = PRINTTY_UNKNOWN_CSI;
@@ -32,7 +33,7 @@ static res_status csi_res_cpr(csi_data *data, PrinttyEvent *pev) {
 static res_status csi_res_tilde(csi_data *data, PrinttyEvent *pev) {
     assert(data && pev);
 
-    if (hda_size(data->params) != 1 || hda_size(data->params[0]) != 1) {
+    if (linc_hda_size(data->params) != 1 || linc_hda_size(data->params[0]) != 1) {
         pev->type = PRINTTY_UNKNOWN_CSI;
         return RES_UNKNOWN;
     }
@@ -49,7 +50,7 @@ static res_status csi_res_tilde(csi_data *data, PrinttyEvent *pev) {
 }
 
 static res_status csi_res_cursor_keys(csi_data *data, PrinttyEvent *pev) {
-    if (hda_size(data->params) != 0) {
+    if (linc_hda_size(data->params) != 0) {
         pev->type = PRINTTY_UNKNOWN_CSI;
         return RES_UNKNOWN;
     }
@@ -75,18 +76,18 @@ static res_status csi_res_cursor_keys(csi_data *data, PrinttyEvent *pev) {
 static void free_params(csi_data *data) {
     assert(data);
 
-    for (size_t i = 0; i < hda_size(data->params); ++i)
-        hda_free(data->params[i]);
+    for (size_t i = 0; i < linc_hda_size(data->params); ++i)
+        linc_hda_free(data->params[i]);
 
-    hda_free(data->params);
+    linc_hda_free(data->params);
 }
 
 void csi_free_data(csi_data *data) {
     assert(data);
 
-    hda_free(data->param_str);
-    hda_free(data->inter_str);
-    hda_free(data->csi);
+    linc_hda_free(data->param_str);
+    linc_hda_free(data->inter_str);
+    linc_hda_free(data->csi);
     free_params(data);
 }
 
@@ -110,15 +111,15 @@ size_t csi_decode(const char32_t *b, size_t n, csi_data *data) {
             if (param_passed)
                 goto fail;
 
-            hda_push(data->param_str, b[i]);
-            hda_push(data->csi, b[i]);
+            linc_hda_push(data->param_str, b[i]);
+            linc_hda_push(data->csi, b[i]);
         } else if (b[i] >= ' ' && b[i] <= '/') {
             param_passed = true;
-            hda_push(data->inter_str, b[i]);
-            hda_push(data->csi, b[i]);
+            linc_hda_push(data->inter_str, b[i]);
+            linc_hda_push(data->csi, b[i]);
         } else if (b[i] >= '@' && b[i] <= '~') {
             data->final_byte = b[i];
-            hda_push(data->csi, b[i]);
+            linc_hda_push(data->csi, b[i]);
             found_final = true;
         } else {
             goto fail;
@@ -141,7 +142,7 @@ int csi_param_decode(csi_data *data) {
     assert(data);
 
     data->params = HDA_NULL;
-    size_t n = hda_size(data->param_str);
+    size_t n = linc_hda_size(data->param_str);
     uint8_t *s = data->param_str;
 
     if (n == 0)
@@ -152,7 +153,7 @@ int csi_param_decode(csi_data *data) {
     bool need_num = true;
 
     for (size_t i = 0; i < n; ++i) {
-        param = hda_last(data->params);
+        param = linc_hda_last(data->params);
 
         /* not within the param string range */
         if (s[i] < '0' || s[i] > '?')
@@ -164,9 +165,9 @@ int csi_param_decode(csi_data *data) {
         if (s[i] == ';') {
             if (need_num) {
                 if (need_str)
-                    param = hda_push(data->params, HDA_NULL);
+                    param = linc_hda_push(data->params, HDA_NULL);
 
-                hda_push(*param, -1);
+                linc_hda_push(*param, -1);
             }
 
             need_str = true;
@@ -174,12 +175,12 @@ int csi_param_decode(csi_data *data) {
 
         } else if (s[i] == ':') {
             if (need_str) {
-                param = hda_push(data->params, HDA_NULL);
+                param = linc_hda_push(data->params, HDA_NULL);
                 need_str = false;
             }
 
             if (need_num)
-                hda_push(*param, -1);
+                linc_hda_push(*param, -1);
 
             need_num = true;
 
@@ -187,16 +188,16 @@ int csi_param_decode(csi_data *data) {
             int32_t digit = s[i] - 48;
 
             if (need_str) {
-                param = hda_push(data->params, HDA_NULL);
+                param = linc_hda_push(data->params, HDA_NULL);
                 need_str = false;
             }
 
             if (need_num) {
-                hda_push(*param, 0);
+                linc_hda_push(*param, 0);
                 need_num = false;
             }
 
-            hda_int *num = &(*param)[hda_size(*param) - 1];
+            hda_int *num = &(*param)[linc_hda_size(*param) - 1];
 
             if (*num > (INT32_MAX - digit) / 10)
                 goto fail;
@@ -208,9 +209,9 @@ int csi_param_decode(csi_data *data) {
 
     if (need_num) {
         if (need_str)
-            param = hda_push(data->params, HDA_NULL);
+            param = linc_hda_push(data->params, HDA_NULL);
 
-        hda_push(*param, -1);
+        linc_hda_push(*param, -1);
     }
 
     return 0;
@@ -226,12 +227,12 @@ res_status resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
     res_status status = RES_INVALID;
     csi_data data = {0};
     char32_t *cps = nullptr;
-    size_t len = hda_size(pt->uc);
+    size_t len = linc_hda_size(pt->uc);
 
     for (size_t i = 0; i < len; ++i) {
-        hda_push(cps, pt->uc[i].cp);
+        linc_hda_push(cps, pt->uc[i].cp);
 
-        size_t n = csi_decode(cps, hda_size(cps), &data);
+        size_t n = csi_decode(cps, linc_hda_size(cps), &data);
         if (n == CSI_INVALID) {
             goto cleanup;
         } else if (n == CSI_AMBIG) {
@@ -259,9 +260,9 @@ res_status resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
         }
 
         if (pev->type == PRINTTY_UNKNOWN_CSI)
-            LOG_INFO("unknown csi: %.*s", (int)hda_size(data.csi), data.csi);
+            LINC_LOG_INFO("unknown csi: %.*s", (int)linc_hda_size(data.csi), data.csi);
 
-        hda_delete(pt->uc, 0, n);
+        linc_hda_delete(pt->uc, 0, n);
         csi_free_data(&data);
         goto cleanup;
     }
@@ -270,7 +271,7 @@ res_status resolve_csi(PrinttyInput *pt, PrinttyEvent *pev) {
     status = RES_OK;
 
 cleanup:
-    hda_free(cps);
+    linc_hda_free(cps);
     csi_free_data(&data);
 
     return status;

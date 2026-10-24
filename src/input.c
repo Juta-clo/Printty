@@ -8,9 +8,11 @@
 
 #include "input.h"
 #include "csi.h"
-#include "linc_tools.h"
 #include "printty_internals.h"
 #include "utf8.h"
+#include <linc/trie.h>
+#include <linc/hda.h>
+#include <linc/hds.h>
 
 #define MIN(a, b)   ((a < b) ? a : b)
 #define MAX(a, b)   ((a > b) ? a : b)
@@ -48,40 +50,40 @@ static PrinttyEvent pop_uc_ev(PrinttyInput *pt, bool uc_only) {
         memcpy(pev.utf8, pt->uc[0].utf8, UTF8_BUF_SIZE);
     }
 
-    hda_delete(pt->uc, 0, 1);
+    linc_hda_delete(pt->uc, 0, 1);
     return pev;
 }
 
 
 static bool check_trie(PrinttyInput *pt, PrinttyEvent *pev) {
     char *chs = nullptr;
-    trie_status tst;
-    size_t len = hda_size(pt->uc);
+    linc_trie_status tst;
+    size_t len = linc_hda_size(pt->uc);
 
     for (size_t i = 0; i < len; ++i) {
         if (pt->uc[i].cp > 127)
             break;
 
-        hds_append_n(chs, &(char){pt->uc[i].cp}, 1);
-        PrinttyInputKey *key = trie_lookup(pt->seqs, chs, &tst);
+        linc_hds_append_n(chs, &(char){pt->uc[i].cp}, 1);
+        PrinttyInputKey *key = linc_trie_lookup(pt->seqs, chs, &tst);
 
         if (tst == TRIE_MATCH) {
             pev->type = PRINTTY_KEY;
             pev->key = *key;
 
-            hda_delete(pt->uc, 0, hds_len(chs));
-            hds_free(chs);
+            linc_hda_delete(pt->uc, 0, linc_hds_len(chs));
+            linc_hds_free(chs);
             return true;
         }
     }
 
-    hds_free(chs);
+    linc_hds_free(chs);
     return false;
 }
 
 void printty_input_feed_bytes(PrinttyInput *pt, const char *s, size_t n) {
     assert(pt && s && n >= 0);
-    hda_insert_buf(pt->bytes, hda_size(pt->bytes), n, s);
+    linc_hda_insert_buf(pt->bytes, linc_hda_size(pt->bytes), n, s);
 }
 
 PrinttyEvent printty_input_res_event(PrinttyInput *pt) {
@@ -121,12 +123,12 @@ size_t printty_input_res_paste(PrinttyInput *pt) {
     if (utf8_res_cps(pt, &pev) == RES_OK)
         return SIZE_MAX;
 
-    for (size_t i = 0; i < hda_size(pt->uc); ++i) {
+    for (size_t i = 0; i < linc_hda_size(pt->uc); ++i) {
         if (pt->uc[i].cp != '\x1b')
             continue;
 
-        if (cp_arr_equal(&pt->uc[i], U"\x1b[201~", hda_size(pt->uc) - i)) {
-            hda_delete(pt->uc, i, 6);
+        if (cp_arr_equal(&pt->uc[i], U"\x1b[201~", linc_hda_size(pt->uc) - i)) {
+            linc_hda_delete(pt->uc, i, 6);
             return i;
         }
     }
@@ -161,20 +163,20 @@ PrinttyInput *printty_input_create(unibi_term *term) {
     if (!pt)
         return NULL;
 
-    pt->seqs = trie_create();
+    pt->seqs = linc_trie_create();
 
     for (size_t i = 0; i < PRINTTY_MAX; ++i) {
         const char *unibi_str = unibi_get_str(term, printty_keys[i].us);
         if (unibi_str)
-            trie_add(pt->seqs, unibi_str, &i, sizeof(int));
+            linc_trie_add(pt->seqs, unibi_str, &i, sizeof(int));
     }
 
     return pt;
 }
 
 void printty_input_destroy(PrinttyInput *pt) {
-    trie_destroy(pt->seqs);
-    hda_free(pt->bytes);
-    hda_free(pt->uc);
+    linc_trie_destroy(pt->seqs);
+    linc_hda_free(pt->bytes);
+    linc_hda_free(pt->uc);
     free(pt);
 }

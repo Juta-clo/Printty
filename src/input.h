@@ -5,10 +5,10 @@
 #include <stdint.h>
 #include <uchar.h>
 #include <unibilium.h>
+#include <linc/trie.h>
 
 #include "printty.h"
 #include "printty_internals.h"
-#include "linc_tools.h"
 
 #define UTF8_BUF_SIZE 5
 
@@ -21,7 +21,7 @@ typedef struct {
 
 struct PrinttyInput {
     uint8_t *bytes;
-    Trie *seqs;
+    linc_trie *seqs;
     uc_data *uc;
 };
 

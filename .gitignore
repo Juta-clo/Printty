@@ -5,3 +5,5 @@ demo/build/
 valout
 out
 test.log
+.xmake/
+test_all

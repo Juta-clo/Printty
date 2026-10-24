@@ -4,6 +4,7 @@
 #include "unity_fixture.h"
 #include "input.h"
 #include "printty_internals.h" // IWYU pragma: keep
+#include <linc/hds.h>
 
 TEST_GROUP(input);
 
@@ -331,67 +332,67 @@ TEST(input, bracketed_paste_markers) {
 TEST(input, base64_encode) {
     char *s = printty_base64_encode("ABC");
     TEST_ASSERT_EQUAL_STRING("QUJD", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("AB");
     TEST_ASSERT_EQUAL_STRING("QUI=", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("A");
     TEST_ASSERT_EQUAL_STRING("QQ==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("");
     TEST_ASSERT_EQUAL_STRING("", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("ABCD");
     TEST_ASSERT_EQUAL_STRING("QUJDRA==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("ABCDE");
     TEST_ASSERT_EQUAL_STRING("QUJDREU=", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("ABCDEF");
     TEST_ASSERT_EQUAL_STRING("QUJDREVG", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("ABCDEFG");
     TEST_ASSERT_EQUAL_STRING("QUJDREVGRw==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode(" ");
     TEST_ASSERT_EQUAL_STRING("IA==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("\n");
     TEST_ASSERT_EQUAL_STRING("Cg==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("\t");
     TEST_ASSERT_EQUAL_STRING("CQ==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("a/b+c=");
     TEST_ASSERT_EQUAL_STRING("YS9iK2M9", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("\x7F");
     TEST_ASSERT_EQUAL_STRING("fw==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("\x80");
     TEST_ASSERT_EQUAL_STRING("gA==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("\xFF");
     TEST_ASSERT_EQUAL_STRING("/w==", s);
-    hds_free(s);
+    linc_hds_free(s);
 
     s = printty_base64_encode("Hello, world!");
     TEST_ASSERT_EQUAL_STRING("SGVsbG8sIHdvcmxkIQ==", s);
-    hds_free(s);
+    linc_hds_free(s);
 }
 
 /************ Test runner ************/

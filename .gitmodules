@@ -1,0 +1,3 @@
+[submodule "deps/Linc"]
+	path = deps/Linc
+	url = git@github_old:Ammsiss/Linc

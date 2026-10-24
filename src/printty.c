@@ -8,6 +8,13 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <time.h>
+#include <sys/timerfd.h>
+#include <poll.h>
+
+#include <linc/log.h>
+#include <linc/hda.h>
+#include <linc/hds.h>
 
 #include "printty.h"
 #include "printty_internals.h" // IWYU pragma: keep
@@ -45,7 +52,7 @@ char *printty_base64_encode(const char *s) {
     char *out = nullptr;
 
     if (len == 0) {
-        hda_push(out, '\0');
+        linc_hda_push(out, '\0');
         return out;
     }
 
@@ -60,7 +67,7 @@ char *printty_base64_encode(const char *s) {
         }
 
         for (size_t y = 0; y < 4; ++y) {
-            hds_append_n(out, &base64_table[(buf & B64_MASK) >> 18], 1);
+            linc_hds_append_n(out, &base64_table[(buf & B64_MASK) >> 18], 1);
             buf <<= 6;
         }
     }
@@ -77,12 +84,12 @@ char *printty_base64_encode(const char *s) {
         }
 
         for (size_t i = 0; i < remainder + 1; ++i) {
-            hds_append_n(out, &base64_table[(buf & B64_MASK) >> 18], 1);
+            linc_hds_append_n(out, &base64_table[(buf & B64_MASK) >> 18], 1);
             buf <<= 6;
         }
 
         for (size_t i = 0; i < 3 - remainder; ++i)
-            hds_append_n(out, "=", 1);
+            linc_hds_append_n(out, "=", 1);
     }
 
     return out;
@@ -228,7 +235,7 @@ PrinttyStatus printty_clipboard_copy(Printty *pt, char *b) {
         goto cleanup;
 
     b64 = printty_base64_encode(b);
-    buf_len = hda_size(b64) + 64;
+    buf_len = linc_hda_size(b64) + 64;
 
     buf = malloc(buf_len);
     if (!buf)
@@ -249,7 +256,7 @@ PrinttyStatus printty_clipboard_copy(Printty *pt, char *b) {
 
 cleanup:
     free(buf);
-    hds_free(b64);
+    linc_hds_free(b64);
 
     return rv;
 }
@@ -359,15 +366,15 @@ char *printty_res_paste(Printty *pt) {
         size_t end_i = printty_input_res_paste(pt->input);
 
         if (end_i != SIZE_MAX) {
-            LOG_INFO("paste end marker found at %zu", end_i);
-            assert(end_i <= hda_size(pt->input->uc));
+            LINC_LOG_INFO("Printty: paste end marker found at %zu", end_i);
+            assert(end_i <= linc_hda_size(pt->input->uc));
 
             for (size_t i = 0; i < end_i; ++i) {
                 PrinttyEvent pev = printty_input_force_event(pt->input, true);
                 if (pev.type != PRINTTY_UNICODE)
                     goto fail;
 
-                hds_append(paste_data, pev.utf8);
+                linc_hds_append(paste_data, pev.utf8);
             }
 
             break;
@@ -383,14 +390,14 @@ char *printty_res_paste(Printty *pt) {
             if (pt->ws_changed) {
                 pt->ws_changed = false;
                 PrinttyEvent pev = { .type = PRINTTY_RESIZE };
-                hda_push(pt->cached_pevs, pev);
+                linc_hda_push(pt->cached_pevs, pev);
             }
 
             continue;
         }
 
         if (pfd[1].revents & POLLIN) {
-            LOG_WARN("Timed out waiting for paste end marker");
+            LINC_LOG_WARN("Printty: Timed out waiting for paste end marker");
             goto fail;
         }
 
@@ -405,7 +412,7 @@ char *printty_res_paste(Printty *pt) {
     return out;
 
 fail:
-    hds_free(paste_data);
+    linc_hds_free(paste_data);
     close(tfd);
     return out;
 }
@@ -440,7 +447,7 @@ PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
             if (pt->ws_changed) {
                 pt->ws_changed = false;
                 PrinttyEvent pev = { .type = PRINTTY_RESIZE };
-                hda_push(pt->cached_pevs, pev);
+                linc_hda_push(pt->cached_pevs, pev);
             }
 
             continue;
@@ -469,7 +476,7 @@ PrinttyStatus printty_get_cursor_pos(Printty *pt, int *row, int *col) {
 
                 } else if (pev.type != PRINTTY_AMBIG &&
                            pev.type != PRINTTY_NONE) {
-                    hda_push(pt->cached_pevs, pev);
+                    linc_hda_push(pt->cached_pevs, pev);
 
                 } else {
                     break;
@@ -497,9 +504,9 @@ PrinttyStatus printty_get_event(Printty *pt, PrinttyEvent *pev) {
     }
 
     /* first return cached event if any */
-    if (hda_size(pt->cached_pevs) > 0) {
+    if (linc_hda_size(pt->cached_pevs) > 0) {
         *pev = pt->cached_pevs[0];
-        hda_delete(pt->cached_pevs, 0, 1);
+        linc_hda_delete(pt->cached_pevs, 0, 1);
         return PRINTTY_OK;
     }
 
@@ -678,7 +685,7 @@ void printty_destroy(Printty *pt) {
 
     printty_input_destroy(pt->input);
     close(pt->tty_fd);
-    hda_free(pt->cached_pevs);
+    linc_hda_free(pt->cached_pevs);
     free(pt);
 }
 

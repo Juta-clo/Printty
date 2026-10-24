@@ -9,7 +9,7 @@
 #include <vterm.h>
 #include <sys/eventfd.h>
 
-#include "linc_tools.h"
+#include <linc/log.h>
 #include "printty.h"
 #include "pty_test.h"
 
@@ -26,16 +26,14 @@ VTerm *vterm;
 VTermScreen *vscreen;
 VTermState *vstate;
 
-
 FILE *log_file;
 
-void pty_test_log(const llog_info *info) {
-    fprintf(log_file, "%s\n", info->msg);
+void pty_test_log(const linc_log_ctx *ctx, void *_) {
+    fprintf(log_file, "%s\n", ctx->msg);
     fflush(log_file);
 }
 
-llog logger = { .sink = pty_test_log };
-LLOG_DEFAULT(&logger);
+linc_log pty_log = { .sink = pty_test_log };
 
 static int start_timerfd(int ms) {
     int sec = ms / 1000;
@@ -138,7 +136,7 @@ void *push_bytes_to_vterm(void *_) {
                 goto cleanup;
 
             buf[num_read] = '\0';
-            LOG_INFO("thread pushed: \"%s\"", buf);
+            LINC_LOG_INFO("thread pushed: \"%s\"", buf);
         }
 
         if (pfds[1].revents & POLLIN)
@@ -196,6 +194,8 @@ void init_harness(void) {
 
     if (tcgetattr(STDIN_FILENO, &tio) == -1)
         err_exit("tcgetattr: %m");
+
+    linc_log_set_default(pty_log);
 }
 
 void create_pty(void) {
