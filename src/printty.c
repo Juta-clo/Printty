@@ -604,17 +604,18 @@ Printty *printty_create(int *tty_fd) {
 
     if (tty_fd) {
         pt->tty_fd = *tty_fd;
-
     } else {
         pt->tty_fd = open("/dev/tty", O_RDWR);
         if (pt->tty_fd == -1)
             goto cleanup;
     }
 
-    if (tcgetattr(pt->tty_fd, &pt->susp_tio) == -1)
+    if (tcgetattr(pt->tty_fd, &pt->og_tio) == -1)
         goto cleanup;
 
-    // unibi
+    pt->saved_tio = pt->og_tio;
+
+    /* unibi */
     pt->term = unibi_from_env();
     if (!pt->term)
         goto cleanup;
@@ -628,10 +629,9 @@ Printty *printty_create(int *tty_fd) {
     if (BE && write_cap(pt, BE, strlen(BE)) == FAIL)
         goto cleanup;
 
-    // input parser
+    /* input parser */
     pt->input = printty_input_create(pt->term);
 
-    // can't restore these
     if (setvbuf(stdin, NULL, _IONBF, 0) != 0)
         return NULL;
     if (setvbuf(stdout, NULL, _IONBF, 0) != 0)
@@ -672,30 +672,31 @@ void printty_destroy(Printty *pt) {
     if (!pt)
         return;
 
-    write_unibi_cap(pt, unibi_keypad_local);
-    if (BD)
-        write_cap(pt, BD, strlen(BD));
-
-    if (pt->ca_mode)
-        printty_exit_alt_screen(pt);
+    if (pt->active)
+        printty_stop(pt);
 
     unibi_destroy(pt->term);
-
-    tcsetattr(pt->tty_fd, TCSANOW, &pt->og_tio);
-
     printty_input_destroy(pt->input);
     close(pt->tty_fd);
     linc_hda_free(pt->cached_pevs);
+    close(pt->sigfd);
+
     free(pt);
 }
 
 PrinttyStatus printty_start(Printty *pt) {
-    if (tcgetattr(pt->tty_fd, &pt->og_tio) == -1)
-        return PRINTTY_ERR;
-    if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
+    if (!pt)
         return PRINTTY_ERR;
 
-    if (tcsetattr(pt->tty_fd, TCSANOW, &pt->susp_tio) == -1)
+    if (pt->active)
+        return PRINTTY_ERR;
+
+    if (tcgetattr(pt->tty_fd, &pt->og_tio) == -1)
+        return PRINTTY_ERR;
+    if (tcsetattr(pt->tty_fd, TCSANOW, &pt->saved_tio) == -1)
+        return PRINTTY_ERR;
+
+    if (ioctl(pt->tty_fd, TIOCGWINSZ, &pt->ws) == -1)
         return PRINTTY_ERR;
 
     if (write_unibi_cap(pt, unibi_keypad_xmit) == FAIL)
@@ -707,31 +708,37 @@ PrinttyStatus printty_start(Printty *pt) {
         if (printty_alt_screen(pt) == PRINTTY_ERR)
             return PRINTTY_ERR;
 
+    pt->active = true;
+
     return PRINTTY_OK;
 }
 
 PrinttyStatus printty_stop(Printty *pt) {
-    if (write_unibi_cap(pt, unibi_keypad_local) == FAIL)
+    if (!pt->active)
         return PRINTTY_ERR;
 
+    pt->active = false;
+
+    int rv = PRINTTY_OK;
+
+    if (write_unibi_cap(pt, unibi_keypad_local) == FAIL)
+        rv = PRINTTY_ERR;
+
     if (BD && write_cap(pt, BD, strlen(BD)) == FAIL)
-        return PRINTTY_ERR;
+        rv = PRINTTY_ERR;
 
     if (pt->ca_mode)
         printty_exit_alt_screen(pt);
 
-    if (tcgetattr(pt->tty_fd, &pt->susp_tio) == -1)
-        return PRINTTY_ERR;
-
+    if (tcgetattr(pt->tty_fd, &pt->saved_tio) == -1)
+        rv = PRINTTY_ERR;
     if (tcsetattr(pt->tty_fd, TCSANOW, &pt->og_tio) == -1)
-        return PRINTTY_ERR;
+        rv = PRINTTY_ERR;
 
-    return PRINTTY_OK;
+    return rv;
 }
 
 PrinttyStatus printty_cbreak(Printty *pt) {
-    /* Job control signals enabled, \n->\r\n on output */
-
     struct termios ts = pt->og_tio;
 
     ts.c_lflag &= ~(ICANON | ECHO);
@@ -741,8 +748,11 @@ PrinttyStatus printty_cbreak(Printty *pt) {
     ts.c_cc[VMIN] = 1;
     ts.c_cc[VTIME] = 0;
 
-    if (tcsetattr(pt->tty_fd, TCSANOW, &ts) == -1)
+    if (!pt->active) {
+        pt->saved_tio = ts;
+    } else if (tcsetattr(pt->tty_fd, TCSANOW, &ts) == -1) {
         return PRINTTY_ERR;
+    }
 
     return PRINTTY_OK;
 }
@@ -758,8 +768,11 @@ PrinttyStatus printty_raw(Printty *pt) {
     ts.c_cc[VMIN] = 1;
     ts.c_cc[VTIME] = 0;
 
-    if (tcsetattr(pt->tty_fd, TCSANOW, &ts) == -1)
+    if (!pt->active) {
+        pt->saved_tio = ts;
+    } else if (tcsetattr(pt->tty_fd, TCSANOW, &ts) == -1) {
         return PRINTTY_ERR;
+    }
 
     return PRINTTY_OK;
 }

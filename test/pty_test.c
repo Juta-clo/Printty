@@ -18,7 +18,7 @@
 
 Printty *pt;
 PrinttyEvent pev;
-struct termios tio;
+struct termios test_tio;
 struct winsize ws = { .ws_row = 40, .ws_col = 80 };
 int mfd, sfd, efd;
 
@@ -34,6 +34,20 @@ void pty_test_log(const linc_log_ctx *ctx, void *_) {
 }
 
 linc_log pty_log = { .sink = pty_test_log };
+
+struct timespec *ms_ts(int ms) {
+    int sec = ms / 1000;
+    ms %= 1000;
+
+    int ns = ms * 1000000;
+
+    static struct timespec ts;
+
+    ts.tv_sec = sec;
+    ts.tv_nsec = ns;
+
+    return &ts;
+}
 
 static int start_timerfd(int ms) {
     int sec = ms / 1000;
@@ -177,8 +191,11 @@ bool term_ensure(vterm_ensure_data *data) {
             if (vterm_input_write(vterm, buf, num_read) != num_read)
                 err_exit("vterm_input_write: partial write");
 
-            if (verify_vterm_ensure(data))
+            if (verify_vterm_ensure(data)) {
+                if (close(tfd) == -1)
+                    err_exit("close: %m");
                 return true;
+            }
         }
     }
 }
@@ -192,7 +209,7 @@ void init_harness(void) {
     if (efd == -1)
         err_exit("eventfd: %m");
 
-    if (tcgetattr(STDIN_FILENO, &tio) == -1)
+    if (tcgetattr(STDIN_FILENO, &test_tio) == -1)
         err_exit("tcgetattr: %m");
 
     linc_log_set_default(pty_log);
@@ -200,7 +217,7 @@ void init_harness(void) {
 
 void create_pty(void) {
     /* init pty */
-    if (openpty(&mfd, &sfd, NULL, &tio, &ws) == -1)
+    if (openpty(&mfd, &sfd, NULL, &test_tio, &ws) == -1)
         err_exit("openpty");
 
     /* init vterm */
@@ -222,8 +239,8 @@ void create_pty(void) {
     vterm_output_set_callback(vterm, vterm_output, &mfd);
 
     pt = printty_create(&sfd);
-    printty_start(pt);
-    printty_cbreak(pt);
+    if (!pt)
+        err_exit("printty_create");
 }
 
 void destroy_pty(void) {

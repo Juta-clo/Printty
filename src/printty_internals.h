@@ -19,6 +19,22 @@ typedef struct {
     uint8_t opaque[32];
 } vt_data;
 
+struct Printty {
+    bool active;
+    int tty_fd;
+    struct termios og_tio;
+    struct termios saved_tio;
+    struct winsize ws;
+    bool ws_changed;
+    struct PrinttyInput *input;
+    unibi_term *term;
+    bool ca_mode;
+    int esc_timeout;
+    sigset_t suspend_mask;
+    PrinttyEvent *cached_pevs;
+    int sigfd;
+};
+
 static struct {
     enum unibi_string us;
 } printty_keys[PRINTTY_MAX] = {
@@ -121,21 +137,6 @@ static struct {
     [PRINTTY_F60]       = { unibi_key_f60 },
     [PRINTTY_F61]       = { unibi_key_f61 },
     [PRINTTY_F62]       = { unibi_key_f62 },
-};
-
-struct Printty {
-    int tty_fd;
-    struct termios og_tio;
-    struct termios susp_tio;
-    struct winsize ws;
-    bool ws_changed;
-    struct PrinttyInput *input;
-    unibi_term *term;
-    bool ca_mode;
-    int esc_timeout;
-    sigset_t suspend_mask;
-    PrinttyEvent *cached_pevs;
-    int sigfd;
 };
 
 #endif

@@ -6,6 +6,7 @@ void run_all(void) {
     RUN_TEST_GROUP(event);
     RUN_TEST_GROUP(csi);
     RUN_TEST_GROUP(param);
+    RUN_TEST_GROUP(termios);
 }
 
 int main(int argc, const char **argv) {

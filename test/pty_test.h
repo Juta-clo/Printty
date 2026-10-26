@@ -78,7 +78,7 @@ static inline void err_exit(const char *fmt, ...) {
 
 extern Printty *pt;
 extern PrinttyEvent pev;
-extern struct termios tio;
+extern struct termios test_tio;
 extern struct winsize ws;
 extern int mfd, sfd, efd;
 
@@ -90,5 +90,6 @@ void init_harness(void);
 void create_pty(void);
 bool term_ensure(vterm_ensure_data *data);
 void destroy_pty(void);
+struct timespec *ms_ts(int ms);
 
 #endif

@@ -13,6 +13,8 @@ TEST_GROUP(event);
 
 TEST_SETUP(event) {
     create_pty();
+    printty_start(pt);
+    printty_cbreak(pt);
 }
 
 TEST_TEAR_DOWN(event) {
