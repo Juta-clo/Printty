@@ -25,6 +25,7 @@
 #define OK    0
 
 #define ARRLEN(arr) sizeof(arr) / sizeof(typeof(arr[0]))
+#define SIGFD_IO_NUM 200
 
 const char *Ss = NULL;
 const char *BE = NULL;
@@ -262,6 +263,9 @@ cleanup:
 }
 
 PrinttyStatus printty_set_color(Printty *pt, int fg, int bg) {
+    if (fg >= unibi_max_colors || bg >= unibi_max_colors)
+        return PRINTTY_ERR;
+
     if (fg != -1) {
         const char *setf = unibi_get_str(pt->term, unibi_set_a_foreground);
         if (!setf)
@@ -650,10 +654,18 @@ Printty *printty_create(int *tty_fd) {
     sigemptyset(&sigwinch_set);
     sigaddset(&sigwinch_set, SIGWINCH);
 
-    pt->sigfd = signalfd(-1, &sigwinch_set, SFD_NONBLOCK);
-    if (pt->sigfd == -1)
+    int sigfd = signalfd(-1, &sigwinch_set, SFD_NONBLOCK);
+    if (sigfd == -1)
         goto cleanup;
 
+    if (sigfd != SIGFD_IO_NUM) {
+        if (dup2(sigfd, SIGFD_IO_NUM) == -1)
+            goto cleanup;
+        if (close(sigfd) == -1)
+            goto cleanup;
+    }
+
+    pt->sigfd = SIGFD_IO_NUM;
     pt->esc_timeout = 100;
 
     return pt;
