@@ -263,7 +263,9 @@ cleanup:
 }
 
 PrinttyStatus printty_set_color(Printty *pt, int fg, int bg) {
-    if (fg >= unibi_max_colors || bg >= unibi_max_colors)
+    int max_color = unibi_get_num(pt->term, unibi_max_colors);
+
+    if (fg >= max_color || bg >= max_color)
         return PRINTTY_ERR;
 
     if (fg != -1) {
@@ -654,13 +656,16 @@ Printty *printty_create(int *tty_fd) {
     sigemptyset(&sigwinch_set);
     sigaddset(&sigwinch_set, SIGWINCH);
 
-    int sigfd = signalfd(-1, &sigwinch_set, SFD_NONBLOCK);
+    int sigfd = signalfd(-1, &sigwinch_set, SFD_NONBLOCK | SFD_CLOEXEC);
     if (sigfd == -1)
         goto cleanup;
 
     if (sigfd != SIGFD_IO_NUM) {
-        if (dup2(sigfd, SIGFD_IO_NUM) == -1)
+        if (dup3(sigfd, SIGFD_IO_NUM, O_CLOEXEC) == -1) {
+            close(sigfd);
             goto cleanup;
+        }
+
         if (close(sigfd) == -1)
             goto cleanup;
     }
